@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Stride.Core.Assets.Editor.View.Behaviors;
 
+#if STRIDE_EDITOR_WINFORMS
 namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
 {
     partial class EditorGameController<TEditorGame>
@@ -114,3 +115,4 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         }
     }
 }
+#endif

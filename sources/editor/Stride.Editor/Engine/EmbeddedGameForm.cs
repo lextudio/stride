@@ -1,5 +1,10 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+//
+// Windows-only WinForms variant of the embedded editor game form. The non-Windows twin
+// (same member surface, headless, no native window) lives in EmbeddedGameForm.Headless.cs;
+// the switch is STRIDE_EDITOR_WINFORMS, set per host OS in sources/Directory.Build.props.
+#if STRIDE_EDITOR_WINFORMS
 using Stride.Core.Presentation.Controls;
 using Stride.Core.Presentation.Interop;
 using Stride.Games;
@@ -19,10 +24,10 @@ namespace Stride.Editor.Engine
         }
 
         /// <summary>
-        /// Gets or sets the <see cref="GameEngineHost"/> associated to this form.
+        /// Gets or sets the embedded-game view associated to this form.
         /// </summary>
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public GameEngineHost Host { get; set; }
+        public IEmbeddedGameHostView Host { get; set; }
 
         /// <inheritdoc/>
         protected override void WndProc(ref System.Windows.Forms.Message m)
@@ -48,3 +53,4 @@ namespace Stride.Editor.Engine
         }
     }
 }
+#endif

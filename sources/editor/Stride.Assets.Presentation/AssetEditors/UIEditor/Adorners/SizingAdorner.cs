@@ -1,7 +1,7 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
-using System.Windows.Forms;
+using System.Windows.Input;
 using Stride.Core.Mathematics;
 using Stride.Assets.Presentation.AssetEditors.UIEditor.Game;
 using Stride.Assets.Presentation.ViewModel;

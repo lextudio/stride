@@ -21,7 +21,7 @@ namespace Stride.Core.Presentation.Controls
     /// A <see cref="FrameworkElement"/> that can host a game engine window. This control is faster than <see cref="HwndHost"/> but might behave
     /// a bit less nicely on certain cases (such as resize, etc.).
     /// </summary>
-    public class GameEngineHost : FrameworkElement, IDisposable, IWin32Window, IKeyboardInputSink
+    public class GameEngineHost : FrameworkElement, IDisposable, IWin32Window, IKeyboardInputSink, IEmbeddedGameHostView
     {
         private readonly List<HwndSource> contextMenuSources = new List<HwndSource>();
         private bool updateRequested;
@@ -55,6 +55,12 @@ namespace Stride.Core.Presentation.Controls
         public IntPtr Handle { get; }
 
         IKeyboardInputSite IKeyboardInputSink.KeyboardInputSite { get; set; }
+
+        /// <inheritdoc/>
+        public FrameworkElement Visual => this;
+
+        /// <inheritdoc/>
+        Point IEmbeddedGameHostView.PointFromScreen(Point screenPoint) => PointFromScreen(screenPoint);
 
         public void Dispose()
         {

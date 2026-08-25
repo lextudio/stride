@@ -5,7 +5,9 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+#if STRIDE_EDITOR_WINFORMS
 using System.Windows.Forms;
+#endif
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core.Assets.Quantum;
@@ -76,10 +78,12 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// The handle of the game form.
         /// </summary>
         private IntPtr windowHandle;
+#if STRIDE_EDITOR_WINFORMS
         /// <summary>
         /// The last click position.
         /// </summary>
         private System.Drawing.Point lastClickPosition;
+#endif
         /// <summary>
         /// Task completion source that sets the result when the game is started.
         /// </summary>
@@ -113,7 +117,11 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             Game = gameFactory(gameContentLoadedTaskSource, builderService.EffectCompiler, builderService.EffectLogPath);
             Game.PackageSettings = asset.ServiceProvider.Get<GameSettingsProviderService>();
             sceneGameThread = new Thread(SafeAction.Wrap(SceneGameRunThread)) { IsBackground = true, Name = $"EditorGameThread ({asset.Url})" };
+            // STA is a Windows-COM concept; requesting it elsewhere throws PlatformNotSupportedException
+            // (LibreWPF does not need it - same gating OpenDevelop's designer child hosts use).
+#if STRIDE_EDITOR_WINFORMS
             sceneGameThread.SetApartmentState(ApartmentState.STA);
+#endif
 
             Debug = new EditorGameDebugService();
             Loader = new EditorContentLoader(this, Logger, asset, editor, Game);
@@ -130,7 +138,11 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// <inheritdoc/>
         public SessionNodeContainer GameSideNodeContainer { get; }
 
-        public GameEngineHost EditorHost => GameForm.Host;
+        /// <summary>
+        /// The WPF element the asset views insert to display the game (platform-neutral seam:
+        /// GameEngineHost on Windows, HeadlessGameHostView elsewhere).
+        /// </summary>
+        public IEmbeddedGameHostView EditorHost => GameForm?.Host;
 
         /// <inheritdoc/>
         public Task GameContentLoaded => gameContentLoadedTaskSource.Task;
@@ -232,9 +244,14 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             sceneGameThread.Start();
             // Wait for the game to start
             await gameStartedTaskSource.Task;
+#if STRIDE_EDITOR_WINFORMS
             GameForm.MouseDown += (sender, e) => lastClickPosition = Control.MousePosition;
             // Initialize the WPF GameEngineHwndHost on this thread
             GameForm.Host = new GameEngineHost(windowHandle);
+#else
+            // Headless: no native window; the frame-presenter view takes GameEngineHost's place.
+            GameForm.Host = new HeadlessGameHostView();
+#endif
 
             // TODO: we could check if the game fails to create.
             return true;
@@ -255,10 +272,16 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             EnsureNotDestroyed();
             if (IsDestroying)
                 return Vector3.Zero;
+#if STRIDE_EDITOR_WINFORMS
             var mousePosition = lastRightClick ? lastClickPosition : Control.MousePosition;
             var localPosition = GameForm.Host.PointFromScreen(new Point(mousePosition.X, mousePosition.Y));
             var relativePos = new Vector2((float)(localPosition.X / GameForm.Host.ActualWidth), (float)(localPosition.Y / GameForm.Host.ActualHeight));
             return Game.GetPositionInScene(relativePos);
+#else
+            // Headless presentation has no global-screen mapping yet (frame presenter slice);
+            // report the scene origin rather than guessing a screen-space position.
+            return Vector3.Zero;
+#endif
         }
 
         public void TriggerActiveRenderStageReevaluation()
@@ -269,13 +292,31 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             Game.TriggerActiveRenderStageReevaluation();
         }
 
-        public void ChangeCursor(Cursor cursor)
+        public void ChangeCursor(System.Windows.Input.Cursor cursor)
         {
             EnsureNotDestroyed();
             if (IsDestroying)
                 return;
-            GameForm.Cursor = cursor;
+#if STRIDE_EDITOR_WINFORMS
+            GameForm.Cursor = ToFormsCursor(cursor);
+#endif
+            // Headless: cursor shapes land with the frame-presenter input slice.
         }
+
+#if STRIDE_EDITOR_WINFORMS
+        private static System.Windows.Forms.Cursor ToFormsCursor(System.Windows.Input.Cursor cursor)
+        {
+            // The adorner layer speaks WPF cursors; the embedded WinForms form wants its own.
+            if (cursor == System.Windows.Input.Cursors.Arrow) return System.Windows.Forms.Cursors.Arrow;
+            if (cursor == System.Windows.Input.Cursors.No) return System.Windows.Forms.Cursors.No;
+            if (cursor == System.Windows.Input.Cursors.SizeAll) return System.Windows.Forms.Cursors.SizeAll;
+            if (cursor == System.Windows.Input.Cursors.SizeNS) return System.Windows.Forms.Cursors.SizeNS;
+            if (cursor == System.Windows.Input.Cursors.SizeWE) return System.Windows.Forms.Cursors.SizeWE;
+            if (cursor == System.Windows.Input.Cursors.SizeNWSE) return System.Windows.Forms.Cursors.SizeNWSE;
+            if (cursor == System.Windows.Input.Cursors.SizeNESW) return System.Windows.Forms.Cursors.SizeNESW;
+            return System.Windows.Forms.Cursors.Default;
+        }
+#endif
 
         /// <inheritdoc/>
         public Task InvokeAsync(Action callback, CancellationToken token = default)
@@ -401,6 +442,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
 
         private void SceneGameRunThread()
         {
+#if STRIDE_EDITOR_WINFORMS
             // Create the form from this thread
             GameForm = new EmbeddedGameForm
             {
@@ -410,6 +452,13 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             windowHandle = GameForm.Handle;
             var context = new GameContextWinforms(GameForm) { InitializeDatabase = false };
             RegisterToDragDropEvents();
+#else
+            // Headless (Linux/macOS via LibreWPF): no native window; frames are presented by
+            // HeadlessGameHostView (see StartGame). Drag-drop/cursor plumbing lands with the
+            // frame-presenter input slice.
+            GameForm = new EmbeddedGameForm();
+            var context = new GameContextHeadless();
+#endif
 
             // Wait for shaders to be loaded
             Asset.ServiceProvider.Get<GameStudioBuilderService>().WaitForShaders();

@@ -392,8 +392,13 @@ namespace Stride.Graphics.SDL
             get
             {
 #if STRIDE_GRAPHICS_API_VULKAN
+                // A Vulkan window is NOT a GL window - SDL_GL_GetDrawableSize is meaningless here
+                // and returns garbage on macOS (observed: a value 4x the logical size that also
+                // double-frames), which fed the swapchain a growing bogus size and blew the Metal
+                // texture limit. Use SDL's Metal drawable size, which is the real CAMetalLayer
+                // backing the MoltenVK swapchain.
                 int w, h;
-                SDL.GLGetDrawableSize(sdlHandle, &w, &h);
+                SDL.MetalGetDrawableSize(sdlHandle, &w, &h);
                 return new Size2(w, h);
 #else
                 var surface = SDL.GetWindowSurface(sdlHandle);

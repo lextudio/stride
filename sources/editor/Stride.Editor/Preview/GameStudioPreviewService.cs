@@ -32,7 +32,7 @@ namespace Stride.Editor.Preview
         private readonly SessionViewModel session;
 
         private readonly AutoResetEvent initializationSignal = new AutoResetEvent(false);
-        private readonly GameEngineHost host;
+        private readonly IEmbeddedGameHostView host;
         private readonly IDebugPage loggerDebugPage;
         private IAssetPreview currentPreview;
         private IntPtr windowHandle;
@@ -72,12 +72,18 @@ namespace Stride.Editor.Preview
             previewCompileContext.CompilationContext = typeof(PreviewCompilationContext);
 
             previewGameThread = new Thread(SafeAction.Wrap(StrideUIThread)) { IsBackground = true, Name = "PreviewGame Thread" };
+#if STRIDE_EDITOR_WINFORMS
             previewGameThread.SetApartmentState(ApartmentState.STA);
+#endif
             previewGameThread.Start();
 
             // Wait for the window handle to be generated on the proper thread
             initializationSignal.WaitOne();
+#if STRIDE_EDITOR_WINFORMS
             host = new GameEngineHost(windowHandle);
+#else
+            host = new HeadlessGameHostView();
+#endif
 
             session.AssetPropertiesChanged += OnAssetPropertyChanged;
             gameSettingsProvider.GameSettingsChanged += OnGameSettingsChanged;
@@ -132,6 +138,7 @@ namespace Stride.Editor.Preview
 
         private void StrideUIThread()
         {
+#if STRIDE_EDITOR_WINFORMS
             gameForm = new EmbeddedGameForm { TopLevel = false, Visible = false };
             windowHandle = gameForm.Handle;
 
@@ -139,6 +146,16 @@ namespace Stride.Editor.Preview
 
             PreviewGame = new PreviewGame(AssetBuilderService.EffectCompiler);
             var context = new GameContextWinforms(gameForm) { InitializeDatabase = false };
+#else
+            // Headless (Linux/macOS via LibreWPF): no native window; the preview presents
+            // through a HeadlessGameHostView until the frame-presenter slice lands.
+            gameForm = new EmbeddedGameForm();
+
+            initializationSignal.Set();
+
+            PreviewGame = new PreviewGame(AssetBuilderService.EffectCompiler);
+            var context = new GameContextHeadless();
+#endif
 
             // Wait for shaders to be loaded
             AssetBuilderService.WaitForShaders();
@@ -201,7 +218,7 @@ namespace Stride.Editor.Preview
 
         public FrameworkElement GetStrideView()
         {
-            return !IsDisposed ? host : null;
+            return !IsDisposed ? host?.Visual : null;
         }
 
         private async Task UpdatePreviewAsset()
