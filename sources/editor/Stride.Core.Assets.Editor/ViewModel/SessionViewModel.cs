@@ -1429,11 +1429,39 @@ namespace Stride.Core.Assets.Editor.ViewModel
             }
         }
 
+        private static readonly Logger AssetInitLog = CreateAssetInitLog();
+
+        private static Logger CreateAssetInitLog()
+        {
+            // A logger straight from GlobalLogger.GetLogger emits nothing until its levels are
+            // activated - without this the messages below are silently dropped.
+            var logger = GlobalLogger.GetLogger("SessionViewModel.AssetInit");
+            logger.ActivateLog(LogMessageType.Debug);
+            return logger;
+        }
+
         private async void ProcessAddedPackages(IEnumerable<PackageViewModel> packages)
         {
             var packageList = packages.ToList();
             // We must refresh asset bases after all packages have been added, because we might have cross-packages references here.
-            packageList.SelectMany(x => x.Assets).ForEach(x => x.Initialize());
+            // An asset that fails to initialize (typically an unresolvable base/archetype) must not take the rest of
+            // the session - let alone the host process - down with it: this method is `async void`, so anything thrown
+            // here surfaces as an unhandled exception on a thread pool thread and terminates the process. Log and skip;
+            // the asset stays uninitialized, which is what the user needs to see reported anyway.
+            packageList.SelectMany(x => x.Assets).ForEach(x =>
+            {
+                try
+                {
+                    x.Initialize();
+                }
+                catch (Exception ex)
+                {
+                    // Deliberately NOT AssetLog.GetLogger(LogKey.Get("Session")): this runs while
+                    // LoadAssetsFromPackages is still going, so registering that key here would make the
+                    // load's own AddLogger(LogKey.Get("Session"), ...) below throw on a duplicate key.
+                    AssetInitLog.Error($"Failed to initialize asset [{x.Url}]", ex);
+                }
+            });
             await AssetDependenciesViewModel.TriggerInitialReferenceBuild(this);
             await Dispatcher.InvokeAsync(() => packageList.ForEach(x => Thumbnails.StartInitialBuild(x)));
         }
