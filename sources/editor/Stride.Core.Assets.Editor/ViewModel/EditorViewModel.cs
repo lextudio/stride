@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Stride.Core.Assets.Editor.Components.Status;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.Settings;
+using Stride.Core.Diagnostics;
 using Stride.Core.Extensions;
 using Stride.Core.IO;
 using Stride.Core.MostRecentlyUsedFiles;
@@ -178,8 +179,27 @@ namespace Stride.Core.Assets.Editor.ViewModel
             // Loading has failed
             if (loadedSession == null)
             {
+                // OpenDevelop fusion diagnostic: this method swallows sessionResult's actual error
+                // detail into a bare `false`, which made a real load failure indistinguishable from
+                // "something went wrong" in the addin's own logs. Surface it via GlobalLogger so it
+                // reaches the host app's log without changing the bool? contract callers rely on.
+                if (!sessionResult.OperationCancelled)
+                    GlobalLogger.GetLogger("EditorViewModel.OpenSession").Error($"Session load failed for '{filePath}':{Environment.NewLine}{sessionResult.ToText()}");
                 // Null means the user has cancelled the loading operation.
                 return sessionResult.OperationCancelled ? (bool?)null : false;
+            }
+
+            // OpenDevelop fusion diagnostic: a "successful" load can still hide failures that cripple the
+            // session - most importantly a NuGet restore that did not run or produced no restore graph,
+            // which leaves every PackageReference unresolved and makes assets fail later on unresolvable
+            // bases, far from the real cause. Surface the load's warnings on the success path too.
+            var loadIssues = sessionResult.Messages.Where(x => x.Type >= LogMessageType.Warning).ToList();
+            if (loadIssues.Count > 0)
+            {
+                var logger = GlobalLogger.GetLogger("EditorViewModel.OpenSession");
+                logger.ActivateLog(LogMessageType.Debug);
+                logger.Warning($"Session '{filePath}' loaded with {loadIssues.Count} warning(s)/error(s):{Environment.NewLine}"
+                    + string.Join(Environment.NewLine, loadIssues.Select(x => $"  [{x.Type}] {x.Text}")));
             }
 
             MRU.AddFile(filePath, EditorVersionMajor);

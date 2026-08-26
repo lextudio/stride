@@ -191,7 +191,17 @@ public static class VSProjectHelper
                     globalProperties["NoWarn"] = "NU1605";
                 var request = new BuildRequestData(projectPath, globalProperties, null, ["Restore"], null, BuildRequestDataFlags.None);
 
-                mainBuildManager.Build(parameters, request);
+                var result = mainBuildManager.Build(parameters, request);
+
+                // In-process restore needs the .NET SDK's NuGet targets reachable through MSBuild's SDK
+                // resolution. When they are not, the project evaluates without them and the build fails with
+                // `The target "Restore" does not exist in the project` - seen when hosting the editor outside
+                // Game Studio (the OpenDevelop fusion on macOS). The result is a session in which every
+                // PackageReference is unresolved, which only surfaces much later, and far from its cause, as
+                // assets with unresolvable bases. Fall back to the `dotnet` CLI: it brings its own SDK, so
+                // the target is always there.
+                if (result.OverallResult == BuildResultCode.Failure)
+                    RestoreWithDotnetCli(logger, projectPath, tolerateDowngrade);
             }
             finally
             {
@@ -199,6 +209,57 @@ public static class VSProjectHelper
                 pc.Dispose();
             }
         });
+    }
+
+    /// <summary>
+    /// Restores <paramref name="projectPath"/> by invoking the <c>dotnet</c> CLI, for hosts where the
+    /// in-process MSBuild cannot resolve the SDK's <c>Restore</c> target. Failures are logged, not thrown:
+    /// this is already the fallback path, and the caller reports an unrestored project through the
+    /// resulting load warnings.
+    /// </summary>
+    private static void RestoreWithDotnetCli(ILogger logger, string projectPath, bool tolerateDowngrade)
+    {
+        try
+        {
+            var arguments = $"restore \"{projectPath}\"";
+            if (tolerateDowngrade)
+                arguments += " -p:NoWarn=NU1605";
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo("dotnet", arguments)
+            {
+                // The project directory, so any Directory.Build.props / NuGet.config above it apply.
+                WorkingDirectory = Path.GetDirectoryName(projectPath) ?? Environment.CurrentDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            logger.Verbose($"In-process restore failed; falling back to `dotnet {arguments}`...");
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process is null)
+            {
+                logger.Warning("Could not start the `dotnet` CLI to restore; the project will load unrestored.");
+                return;
+            }
+
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            var standardError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            if (process.ExitCode == 0)
+            {
+                logger.Verbose($"`dotnet restore` succeeded for {Path.GetFileName(projectPath)}.");
+                return;
+            }
+
+            logger.Warning($"`dotnet restore` failed for {Path.GetFileName(projectPath)} (exit code {process.ExitCode}).{Environment.NewLine}{standardOutput}{standardError}");
+        }
+        catch (Exception ex)
+        {
+            logger.Warning($"Falling back to the `dotnet` CLI to restore [{projectPath}] failed.", ex);
+        }
     }
 
     public static MicrosoftProject LoadProject(string fullProjectLocation, string configuration = "Debug", string platform = "AnyCPU", Dictionary<string, string>? extraProperties = null)
