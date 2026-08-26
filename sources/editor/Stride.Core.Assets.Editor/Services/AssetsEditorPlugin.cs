@@ -7,6 +7,7 @@ using System.Reflection;
 using Stride.Core.Assets.Editor.Annotations;
 using Stride.Core.Assets.Editor.Components.Properties;
 using Stride.Core.Assets.Editor.ViewModel;
+using Stride.Core.Extensions;
 using Stride.Core.Presentation.View;
 
 #nullable enable
@@ -25,7 +26,7 @@ public abstract class AssetsEditorPlugin : AssetsPlugin
     public void RegisterAssetEditorViewModelTypes(IDictionary<Type, Type> assetEditorViewModelTypes)
     {
         var pluginAssembly = GetType().Assembly;
-        foreach (var type in pluginAssembly.GetTypes())
+        foreach (var type in pluginAssembly.GetFullyLoadedTypes())
         {
             if (typeof(IAssetEditorViewModel).IsAssignableFrom(type) &&
                 type.GetCustomAttribute<AssetEditorViewModelAttribute>() is { } attribute)
@@ -38,7 +39,7 @@ public abstract class AssetsEditorPlugin : AssetsPlugin
     public void RegisterAssetEditorViewTypes(IDictionary<Type, Type> assetEditorViewTypes)
     {
         var pluginAssembly = GetType().Assembly;
-        foreach (var type in pluginAssembly.GetTypes())
+        foreach (var type in pluginAssembly.GetFullyLoadedTypes())
         {
             if (typeof(IEditorView).IsAssignableFrom(type) &&
                 type.GetCustomAttribute<AssetEditorViewAttribute>() is { } attribute)

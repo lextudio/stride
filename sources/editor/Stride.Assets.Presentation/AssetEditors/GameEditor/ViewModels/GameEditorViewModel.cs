@@ -51,7 +51,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.ViewModels
         internal SessionNodeContainer NodeContainer => Session.AssetNodeContainer;
 
         [NotNull]
-        protected internal virtual IEditorGameController Controller { get; }
+        public virtual IEditorGameController Controller { get; }
 
         [NotNull]
         public ICommandBase CopyErrorToClipboardCommand { get; }

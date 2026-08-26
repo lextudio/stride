@@ -63,7 +63,7 @@ namespace Stride.Editor
         /// <inheritdoc />
         public override void RegisterPrimitiveTypes(ICollection<Type> primitiveTypes)
         {
-            foreach (var type in AssemblyRegistry.FindAll().SelectMany(x => x.GetTypes()))
+            foreach (var type in AssemblyRegistry.FindAll().SelectMany(x => x.GetFullyLoadedTypes()))
             {
                 var serializer = SerializerSelector.AssetWithReuse.GetSerializer(type);
                 if (serializer != null)
@@ -110,7 +110,7 @@ namespace Stride.Editor
         public override void RegisterAssetPreviewViewModelTypes(IDictionary<Type, Type> assetPreviewViewModelTypes)
         {
             var pluginAssembly = GetType().Assembly;
-            foreach (var type in pluginAssembly.GetTypes())
+            foreach (var type in pluginAssembly.GetFullyLoadedTypes())
             {
                 if (typeof(IAssetPreviewViewModel).IsAssignableFrom(type) &&
                     type.GetCustomAttribute<AssetPreviewViewModelAttribute>() is { } attribute)

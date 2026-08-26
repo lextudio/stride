@@ -156,7 +156,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         public override EntityHierarchyViewModel Asset => (EntityHierarchyViewModel)base.Asset;
 
         // TODO: turn private, create a service getter that accepts only IEditorGameViewModelService
-        protected internal override EntityHierarchyEditorController Controller => (EntityHierarchyEditorController)base.Controller;
+        public override EntityHierarchyEditorController Controller => (EntityHierarchyEditorController)base.Controller;
 
         private IEditorGameMaterialHighlightViewModelService MaterialHighlight => Controller.GetService<IEditorGameMaterialHighlightViewModelService>();
 

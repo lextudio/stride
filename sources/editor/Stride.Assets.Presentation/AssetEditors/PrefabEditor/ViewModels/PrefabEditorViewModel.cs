@@ -43,7 +43,7 @@ namespace Stride.Assets.Presentation.AssetEditors.PrefabEditor.ViewModels
 
         public override PrefabViewModel Asset => (PrefabViewModel)base.Asset;
 
-        protected internal override PrefabEditorController Controller => (PrefabEditorController)base.Controller;
+        public override PrefabEditorController Controller => (PrefabEditorController)base.Controller;
 
         /// <inheritdoc />
         protected override AssetCompositeItemViewModel CreateRootPartViewModel()

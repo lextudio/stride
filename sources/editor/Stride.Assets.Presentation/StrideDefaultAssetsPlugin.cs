@@ -124,7 +124,7 @@ namespace Stride.Assets.Presentation
             }
 
             var entityFactories = new Core.Collections.SortedList<EntityFactoryCategory, EntityFactoryCategory>();
-            foreach (var factoryType in Assembly.GetExecutingAssembly().GetTypes().Where(x => typeof(IEntityFactory).IsAssignableFrom(x) && x.GetConstructor(Type.EmptyTypes) != null))
+            foreach (var factoryType in Assembly.GetExecutingAssembly().GetFullyLoadedTypes().Where(x => typeof(IEntityFactory).IsAssignableFrom(x) && x.GetConstructor(Type.EmptyTypes) != null))
             {
                 var display = factoryType.GetCustomAttribute<DisplayAttribute>();
                 if (display == null)
@@ -147,7 +147,7 @@ namespace Stride.Assets.Presentation
 
             AssemblyRegistry.AssemblyRegistered += (sender, e) =>
             {
-                var types = e.Assembly.GetTypes();
+                var types = e.Assembly.GetFullyLoadedTypes().ToArray();
                 SetTypeExpandRuleFallback(types);
 
                 if (e.Categories.Contains(AssemblyCommonCategories.Assets))
@@ -160,14 +160,14 @@ namespace Stride.Assets.Presentation
             {
                 if (e.Categories.Contains(AssemblyCommonCategories.Assets))
                 {
-                    OnUnregisteredAssetAssembly(e.Assembly.GetTypes());
+                    OnUnregisteredAssetAssembly(e.Assembly.GetFullyLoadedTypes().ToArray());
                 }
             };
 
             SetTypeExpandRuleFallback(typeof(EntityComponent).GetInheritedInstantiableTypes().ToArray());
 
             foreach (var assembly in AssetRegistry.AssetAssemblies)
-                OnRegisteredAssetAssembly(assembly.GetTypes());
+                OnRegisteredAssetAssembly(assembly.GetFullyLoadedTypes().ToArray());
             
             EntityFactoryCategories = entityFactories.Keys.ToList();
 
@@ -250,7 +250,7 @@ namespace Stride.Assets.Presentation
         public override void RegisterAssetPreviewViewTypes(IDictionary<Type, Type> assetPreviewViewTypes)
         {
             var pluginAssembly = GetType().Assembly;
-            foreach (var type in pluginAssembly.GetTypes())
+            foreach (var type in pluginAssembly.GetFullyLoadedTypes())
             {
                 if (!typeof(IPreviewView).IsAssignableFrom(type))
                 {
@@ -408,7 +408,7 @@ namespace Stride.Assets.Presentation
         {
             // TODO: iterate on plugin assembly or register component type in the plugin registry
             var hashSet = new HashSet<int>();
-            var componentTypes = AssetRegistry.AssetAssemblies.SelectMany(x => x.GetTypes().Where(y => typeof(EntityComponent).IsAssignableFrom(y)));
+            var componentTypes = AssetRegistry.AssetAssemblies.SelectMany(x => x.GetFullyLoadedTypes().Where(y => typeof(EntityComponent).IsAssignableFrom(y)));
             var orders = new List<(Type, int)>();
             foreach (var type in componentTypes)
             {

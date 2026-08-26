@@ -87,7 +87,7 @@ namespace Stride.Assets.Presentation.AssetEditors
                 return;
             }
 
-            var types = assembly.GetTypes();
+            var types = assembly.GetFullyLoadedTypes();
 
             var nonScriptsPaths = new HashSet<string>();
             var typesDict = new Dictionary<string, List<Type>>();

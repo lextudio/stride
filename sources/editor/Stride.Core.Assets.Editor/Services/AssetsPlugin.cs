@@ -8,6 +8,7 @@ using System.Reflection;
 using Stride.Core.Assets.Editor.Annotations;
 using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core.Diagnostics;
+using Stride.Core.Extensions;
 
 #nullable enable
 
@@ -42,7 +43,11 @@ public abstract class AssetsPlugin
     public void RegisterAssetViewModelTypes(IDictionary<Type, Type> assetViewModelTypes)
     {
         var pluginAssembly = GetType().Assembly;
-        foreach (var type in pluginAssembly.GetTypes())
+        // GetFullyLoadedTypes, not GetTypes: a plugin assembly's view types can pull in dependencies
+        // that conflict with the host's own (hosting this plugin inside OpenDevelop hits exactly that
+        // with AvalonDock), and GetTypes would then throw instead of returning the AssetViewModel
+        // types being looked for here, which never touch those dependencies.
+        foreach (var type in pluginAssembly.GetFullyLoadedTypes())
         {
             if (typeof(AssetViewModel).IsAssignableFrom(type) &&
                 type.GetCustomAttribute<AssetViewModelAttribute>() is { } attribute)

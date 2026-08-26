@@ -42,7 +42,7 @@ namespace Stride.Assets.Presentation.AssetEditors.VisualScriptEditor
         public BlockTemplateDescriptionCollectionViewModel(VisualScriptEditorViewModel editor) : base(editor.ServiceProvider)
         {
             // Create a template for each non-abstract block type
-            foreach (var blockFactory in AssemblyRegistry.FindAll().SelectMany(x => x.GetTypes())
+            foreach (var blockFactory in AssemblyRegistry.FindAll().SelectMany(x => x.GetFullyLoadedTypes())
                 .Where(t => !t.IsAbstract && typeof(Block).IsAssignableFrom(t) && t != typeof(MethodCallBlock) && t.GetConstructor(Type.EmptyTypes) != null)
                 .Where(t => TypeDescriptorFactory.Default.AttributeRegistry.GetAttribute<ObsoleteAttribute>(t) == null)
                 .Where(t => TypeDescriptorFactory.Default.AttributeRegistry.GetAttribute<NonInstantiableAttribute>(t) == null)
