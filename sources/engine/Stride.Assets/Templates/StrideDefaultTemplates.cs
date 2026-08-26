@@ -2,10 +2,12 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.IO;
 using Stride.Core;
 using Stride.Core.Assets;
 using Stride.Core.Assets.Templates;
 using Stride.Core.Diagnostics;
+using Stride.Core.IO;
 
 namespace Stride.Assets.Templates;
 
@@ -28,10 +30,27 @@ public static class StrideDefaultTemplates
         // Only TemplateFolders are needed here (loaded regardless of this flag); skip the package's
         // assets — they're unused for template registration and slow to load.
         var loadParams = new PackageLoadParameters { LoadAssemblyReferences = loadAssemblyReferences, AutoLoadTemporaryAssets = false };
-        foreach (var packageInfo in new[] { new { Name = "Stride.Assets.Presentation", Version = StrideVersion.NuGetVersion }, new { Name = "Stride.SpriteStudio.Offline", Version = StrideVersion.NuGetVersion } })
+        // OpenDevelop fusion: consumers built straight from this checkout (raw file references,
+        // not a NuGet-restored install) never have these two packages under PackageStore's
+        // NuGet-cache identity, so the lookup below always misses on non-Windows dev hosts. When
+        // STRIDE_SOURCE_ROOT is set (OpenDevelop's addin sets it before touching this code - see
+        // doc/technotes/stride-game-studio.md), fall back to the known source-tree .sdpkg path
+        // instead of re-implementing package resolution.
+        var sourceRoot = Environment.GetEnvironmentVariable("STRIDE_SOURCE_ROOT");
+        foreach (var packageInfo in new[]
+        {
+            new { Name = "Stride.Assets.Presentation", Version = StrideVersion.NuGetVersion, SourceRelativePath = "sources/editor/Stride.Assets.Presentation/Stride.Assets.Presentation.sdpkg" },
+            new { Name = "Stride.SpriteStudio.Offline", Version = StrideVersion.NuGetVersion, SourceRelativePath = "sources/engine/Stride.SpriteStudio.Offline/Stride.SpriteStudio.Offline.sdpkg" },
+        })
         {
             var logger = new LoggerResult();
             var packageFile = PackageStore.Instance.GetPackageFileName(packageInfo.Name, new PackageVersionRange(new PackageVersion(packageInfo.Version)));
+            if (packageFile is null && sourceRoot is not null)
+            {
+                var candidate = Path.Combine(sourceRoot, packageInfo.SourceRelativePath);
+                if (File.Exists(candidate))
+                    packageFile = new UFile(candidate);
+            }
             if (packageFile is null)
                 throw new InvalidOperationException($"Could not find package {packageInfo.Name} {packageInfo.Version}. Ensure packages have been resolved.");
             var package = Package.Load(logger, packageFile.ToOSPath(), loadParams);

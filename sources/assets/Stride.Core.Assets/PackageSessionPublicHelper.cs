@@ -57,23 +57,33 @@ public static class PackageSessionPublicHelper
                 //  except that we load everything in another context.
 
                 ApplyDotNetSdkEnvironmentVariables(MSBuildInstance.MSBuildPath);
-
-                var msbuildAssemblyLoadContext = new AssemblyLoadContext("MSBuild");
-
-                // Fall back to the SDK directory for MSBuild assemblies. Runs after the NuGet resolver
-                // (registered earlier) so Stride's pinned versions win over name-colliding SDK copies.
-                AppDomain.CurrentDomain.AssemblyResolve += (_, resolveArgs) =>
-                {
-                    var assemblyName = new System.Reflection.AssemblyName(resolveArgs.Name);
-                    string path = Path.Combine(MSBuildInstance.MSBuildPath, assemblyName.Name + ".dll");
-                    if (File.Exists(path))
-                    {
-                        return msbuildAssemblyLoadContext.LoadFromAssemblyPath(path);
-                    }
-
-                    return null;
-                };
             }
+
+            var msbuildAssemblyLoadContext = new AssemblyLoadContext("MSBuild");
+
+            // Fall back to the SDK directory for MSBuild assemblies. Runs after the NuGet resolver
+            // (registered earlier) so Stride's pinned versions win over name-colliding SDK copies.
+            //
+            // Registered unconditionally, unlike the environment setup above: this is a pure fallback,
+            // only consulted once normal resolution has already failed, and the case where MSBuild is
+            // already loaded is precisely the case that needs it most. When Stride runs inside a host
+            // that brought its own MSBuild (an IDE embedding this as a plugin — OpenDevelop does),
+            // that host's copy can be a partial set: enough to load Microsoft.Build itself, but
+            // missing assemblies the SDK targets pull in later. Measured there: the SDK's
+            // Microsoft.PackageDependencyResolution.targets failed reading project.assets.json because
+            // NuGet.LibraryModel 7.6.0.0 was absent from the host's directory while present in the SDK
+            // directory this resolver points at.
+            AppDomain.CurrentDomain.AssemblyResolve += (_, resolveArgs) =>
+            {
+                var assemblyName = new System.Reflection.AssemblyName(resolveArgs.Name);
+                string path = Path.Combine(MSBuildInstance.MSBuildPath, assemblyName.Name + ".dll");
+                if (File.Exists(path))
+                {
+                    return msbuildAssemblyLoadContext.LoadFromAssemblyPath(path);
+                }
+
+                return null;
+            };
         }
 
         SetupMSBuildCurrentHostForOutOfProc(MSBuildInstance.MSBuildPath);

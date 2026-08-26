@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using NuGet.Commands;
@@ -20,6 +20,29 @@ partial class PackageSession
     // Set when LoadMissingDependencies restored the whole solution once up front, so the per-project
     // restore below can be skipped (kept only as a fallback when there's no solution or after an upgrade).
     private bool solutionDependenciesRestored;
+
+    /// <summary>
+    /// Locates a Stride package's <c>.sdpkg</c> directly in a source checkout, for consumers built
+    /// from source rather than a NuGet-restored install (see <see cref="FindAndSetMSBuildVersion"/>'s
+    /// STRIDE_SOURCE_ROOT usage and the caller above). Package source directories all sit at a fixed
+    /// depth under one of a handful of top-level folders, so this is a couple of single-level
+    /// directory listings, not a recursive search of the whole checkout.
+    /// </summary>
+    private static string? FindSourceTreePackageFile(string packageName)
+    {
+        var sourceRoot = Environment.GetEnvironmentVariable("STRIDE_SOURCE_ROOT");
+        if (string.IsNullOrEmpty(sourceRoot))
+            return null;
+
+        foreach (var group in new[] { "engine", "editor", "assets", "core", "presentation" })
+        {
+            var candidate = Path.Combine(sourceRoot, "sources", group, packageName, packageName + ".sdpkg");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Locates a dev-redirect package's build manifest: the newest <c>&lt;project&gt;.sdbuild</c> under the
@@ -381,6 +404,16 @@ partial class PackageSession
                             break;
                         case DependencyType.Package:
                             file = PackageStore.Instance.GetPackageFileName(projectDependency.Name, new PackageVersionRange(projectDependency.Version), constraintProvider);
+                            // OpenDevelop fusion: a project built against a source checkout (raw file
+                            // references, not a NuGet-restored install) never has its Stride.* package
+                            // dependencies under PackageStore's NuGet-cache identity - same root cause
+                            // as StrideDefaultTemplates.Load's STRIDE_SOURCE_ROOT fallback (see that
+                            // method), but this is every package a project references, not a fixed
+                            // pair, so search the source tree by name instead of hardcoding paths.
+                            // The dev-redirect logic just below already handles a source-tree .sdpkg
+                            // correctly (via its sibling .csproj's .sdbuild manifest) once it has one -
+                            // it just never got one, because this lookup returned null first.
+                            file ??= FindSourceTreePackageFile(projectDependency.Name);
                             break;
                     }
 
@@ -434,6 +467,7 @@ partial class PackageSession
 
                             if (loadedProject is StandalonePackage standalonePackage)
                                 standalonePackage.Assemblies.AddRange(projectDependency.Assemblies);
+
                         }
 
                         Projects.Add(loadedProject);
