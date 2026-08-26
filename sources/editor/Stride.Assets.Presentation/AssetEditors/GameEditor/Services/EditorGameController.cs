@@ -27,6 +27,9 @@ using Stride.Editor.Engine;
 using Stride.Engine.Processors;
 using Stride.Games;
 using Stride.Shaders.Compiler;
+#if !STRIDE_EDITOR_WINFORMS
+using Stride.Graphics.SDL;
+#endif
 using Point = System.Windows.Point;
 
 namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
@@ -63,9 +66,48 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
 
         EditorServiceGame IEditorGameAccess.EditorGame => Game;
         /// <summary>
-        /// The scene game thread.
+        /// The scene game thread. On Windows this is a dedicated background thread the game
+        /// loop runs on (see <see cref="SceneGameRunThread"/>). On macOS/Linux this is instead
+        /// the thread that calls <see cref="StartGame"/> - captured lazily there, not created
+        /// here - because SDL/Cocoa window creation and event pumping must happen on the
+        /// process's real main thread, and this class's own game-thread-identity checks
+        /// (<see cref="IsInGameThread"/>, <see cref="EnsureGameAccess"/>) need SOME stable
+        /// <see cref="Thread"/> reference to compare against either way. See
+        /// doc/technotes/stride-game-studio.md (OpenDevelop fusion) for the fuller rationale.
         /// </summary>
-        private readonly Thread sceneGameThread;
+        private Thread sceneGameThread;
+
+#if !STRIDE_EDITOR_WINFORMS
+        /// <summary>
+        /// The SDL window the game renders into on macOS/Linux, exposed so an embedding host
+        /// (e.g. the OpenDevelop addin) can attach its own native composition bridge - see
+        /// StrideSdlViewport.cs's `addChildWindow` overlay technique in the OpenDevelop repo.
+        /// This class deliberately does not know about Cocoa/WPF-hosting specifics itself.
+        /// </summary>
+        private Window sdlWindow;
+        private GameContextSDL sdlContext;
+
+        /// <summary>
+        /// Typed as <c>object</c> to match <see cref="IEditorGameController.SdlWindow"/> (that
+        /// interface stays platform-neutral, with no <c>Stride.Graphics.SDL</c> reference of its
+        /// own) - callers cast back to <see cref="Window"/>.
+        /// </summary>
+        public object SdlWindow => sdlWindow;
+
+        /// <summary>
+        /// Pumps one frame of the game loop. Must be called from the same thread that called
+        /// <see cref="StartGame"/> (the embedding host's UI/main thread) - typically driven by
+        /// that host's own per-frame tick (e.g. WPF's CompositionTarget.Rendering), mirroring
+        /// StrideSdlViewport's own OnRendering handler.
+        /// </summary>
+        public void Tick()
+        {
+            if (sdlContext == null)
+                return;
+            Stride.Graphics.SDL.Application.ProcessEvents();
+            sdlContext.RunCallback?.Invoke();
+        }
+#endif
         /// <summary>
         /// The service registry.
         /// </summary>
@@ -116,11 +158,15 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             var builderService = asset.ServiceProvider.Get<GameStudioBuilderService>();
             Game = gameFactory(gameContentLoadedTaskSource, builderService.EffectCompiler, builderService.EffectLogPath);
             Game.PackageSettings = asset.ServiceProvider.Get<GameSettingsProviderService>();
+#if STRIDE_EDITOR_WINFORMS
             sceneGameThread = new Thread(SafeAction.Wrap(SceneGameRunThread)) { IsBackground = true, Name = $"EditorGameThread ({asset.Url})" };
             // STA is a Windows-COM concept; requesting it elsewhere throws PlatformNotSupportedException
             // (LibreWPF does not need it - same gating OpenDevelop's designer child hosts use).
-#if STRIDE_EDITOR_WINFORMS
             sceneGameThread.SetApartmentState(ApartmentState.STA);
+#else
+            // No dedicated thread here - SDL/Cocoa needs the real process main thread, which
+            // this constructor does not run on in general. StartGame() captures whichever
+            // thread calls it instead (see the sceneGameThread field comment).
 #endif
 
             Debug = new EditorGameDebugService();
@@ -240,16 +286,44 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             EnsureNotDestroyed();
             if (IsDestroying)
                 throw new InvalidOperationException("This controller is beeing disposed.");
+#if STRIDE_EDITOR_WINFORMS
             // Run the game in a separate thread (create Form and run)
             sceneGameThread.Start();
             // Wait for the game to start
             await gameStartedTaskSource.Task;
-#if STRIDE_EDITOR_WINFORMS
             GameForm.MouseDown += (sender, e) => lastClickPosition = Control.MousePosition;
             // Initialize the WPF GameEngineHwndHost on this thread
             GameForm.Host = new GameEngineHost(windowHandle);
 #else
-            // Headless: no native window; the frame-presenter view takes GameEngineHost's place.
+            // SDL/Cocoa needs the process's real main thread - run setup on whichever thread
+            // called StartGame() (the embedding host is expected to call this from its own
+            // UI/main thread) instead of spawning a dedicated background thread. The
+            // (potentially slow) shader wait happens off that thread first so it doesn't block
+            // the caller's UI.
+            await Task.Run(() => Asset.ServiceProvider.Get<GameStudioBuilderService>().WaitForShaders());
+            sceneGameThread = Thread.CurrentThread;
+
+            GameForm = new EmbeddedGameForm();
+            sdlWindow = new Window("EditorGameController scene", IntPtr.Zero);
+            // InitializeDatabase = false, matching the WinForms context this branch replaces: the
+            // editor supplies its own micro-thread-aware IDatabaseFileProviderService, but
+            // Game.PrepareContext hard-casts that service to the concrete DatabaseFileProviderService
+            // when it initializes the database itself, which throws against the editor's
+            // MicroThreadLocalProviderService.
+            sdlContext = new GameContextSDL(sdlWindow, 0, 0, isUserManagingRun: true) { InitializeDatabase = false };
+
+            serviceRegistry = new EditorGameServiceRegistry();
+            InitializeServices(serviceRegistry);
+            Game.RegisterServices(serviceRegistry);
+
+            Game.Run(sdlContext); // returns immediately: isUserManagingRun defers the loop to Tick()
+            gameStartedTaskSource.SetResult(true);
+
+            // No native-window-embedding seam is wired up here on purpose: unlike the WinForms
+            // path (GameEngineHost) or the old headless path (HeadlessGameHostView), the actual
+            // Cocoa `addChildWindow` composition bridge lives entirely in the embedding host
+            // (see StrideSdlViewport.cs in the OpenDevelop addin) - this class only exposes
+            // SdlWindow and Tick() for that host to drive.
             GameForm.Host = new HeadlessGameHostView();
 #endif
 
@@ -440,9 +514,13 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             services.Add(RecoveryService = new EditorGameRecoveryService(Editor) { IsActive = true });
         }
 
+#if STRIDE_EDITOR_WINFORMS
+        // Only ever invoked via sceneGameThread.Start() from StartGame()'s WinForms branch - the
+        // macOS/Linux path runs its own setup inline in StartGame() instead (SDL/Cocoa needs the
+        // caller's thread to BE the process main thread, so there is no separate "run thread" to
+        // start there - see the sceneGameThread field comment).
         private void SceneGameRunThread()
         {
-#if STRIDE_EDITOR_WINFORMS
             // Create the form from this thread
             GameForm = new EmbeddedGameForm
             {
@@ -452,13 +530,6 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             windowHandle = GameForm.Handle;
             var context = new GameContextWinforms(GameForm) { InitializeDatabase = false };
             RegisterToDragDropEvents();
-#else
-            // Headless (Linux/macOS via LibreWPF): no native window; frames are presented by
-            // HeadlessGameHostView (see StartGame). Drag-drop/cursor plumbing lands with the
-            // frame-presenter input slice.
-            GameForm = new EmbeddedGameForm();
-            var context = new GameContextHeadless();
-#endif
 
             // Wait for shaders to be loaded
             Asset.ServiceProvider.Get<GameStudioBuilderService>().WaitForShaders();
@@ -473,6 +544,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             Game.Run(context);
             Game.Dispose();
         }
+#endif
 
         partial void RegisterToDragDropEvents();
 

@@ -66,7 +66,13 @@ namespace Stride.Games
             if (window != null)
             {
                 window.FullscreenIsBorderlessWindow = FullscreenIsBorderlessWindow;
-                var canResize = clientWidth > 0 && clientHeight > 0 && window.WindowState != FormWindowState.Minimized;
+                // Same reasoning as Resize: an embedded, host-driven window's geometry belongs to
+                // the host, and the incoming values are back-buffer pixels being assigned to a
+                // logical-point ClientSize, which doubles the window on a high-DPI display. This is
+                // the path that actually fires for the editor game - GraphicsDeviceManager routes
+                // the back-buffer size here through EndScreenDeviceChange, not through Resize.
+                var hostManagesGeometry = GameContext?.IsUserManagingRun == true;
+                var canResize = !hostManagesGeometry && clientWidth > 0 && clientHeight > 0 && window.WindowState != FormWindowState.Minimized;
                 if (deviceChangeWillBeFullScreen.Value) //windowed to fullscreen
                 {
                     if (canResize)
@@ -296,6 +302,21 @@ namespace Stride.Games
 
         internal override void Resize(int width, int height)
         {
+            // When the host drives the loop it also owns the window's geometry - the window is
+            // embedded in the host's layout (the OpenDevelop fusion attaches it as a child window
+            // sized to a WPF element), so the game resizing itself to its back buffer fights the
+            // host for control and wins, leaving the surface the wrong size.
+            //
+            // It is also wrong on its own terms on a high-DPI display: callers pass back-buffer
+            // dimensions, which are pixels, while ClientSize is logical points. Those agree only at
+            // scale 1, so the window grows by the scale factor - and since a larger window yields a
+            // larger back buffer, the next resize grows it again. Dividing by ScaleFactor does not
+            // reliably fix that either: at the first resize the drawable surface may not exist yet,
+            // ScaleFactor reads 1, and the window is left doubled for good (measured on macOS:
+            // a 468x18-point window ended up 936x36 with ScaleFactor reporting 2 afterwards).
+            if (GameContext?.IsUserManagingRun == true)
+                return;
+
             window.ClientSize = new Size2(width, height);
         }
 

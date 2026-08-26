@@ -16,7 +16,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
     public class DispatcherLock : IDisposable
     {
         // TODO: we might want to move that to the plugin level at some point (or even above? in Presentation?)
-        private struct DispatcherState
+        private sealed class DispatcherState
         {
             public DispatcherState([NotNull] IDispatcherService dispatcher)
             {
@@ -30,6 +30,12 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             public readonly IDispatcherService Dispatcher;
             public readonly TaskCompletionSource<int> Locked;
             public readonly TaskCompletionSource<int> Unlocked;
+
+            /// <summary>
+            /// True if this dispatcher was not locked because an earlier dispatcher in the same lock turned out to be
+            /// backed by the same thread, which already excludes itself.
+            /// </summary>
+            public bool Skipped;
         }
 
         private readonly List<DispatcherState> dispatcherStates;
@@ -51,6 +57,9 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             // Unlock all dispatchers.
             foreach (var dispatcher in dispatcherStates)
             {
+                if (dispatcher.Skipped)
+                    continue;
+
                 dispatcher.Unlocked.SetResult(0);
             }
         }
@@ -78,16 +87,40 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// <remarks>
         /// Dispatchers are unlocked when the returned <see cref="DispatcherLock"/> is disposed.
         /// </remarks>
+        /// <remarks>
+        /// If several of the given dispatchers turn out to be backed by the same thread, only the first of them is
+        /// actually locked - that thread already excludes itself, and blocking it a second time would deadlock. This
+        /// can only be detected when <paramref name="lockSequencially"/> is true.
+        /// </remarks>
         [ItemNotNull, NotNull]
         public static async Task<DispatcherLock> Lock(bool lockSequencially, [ItemNotNull, NotNull]  params IDispatcherService[] dispatchers)
         {
             if (dispatchers == null) throw new ArgumentNullException(nameof(dispatchers));
 
             var lok = new DispatcherLock(dispatchers);
-            foreach (var dispatcher in lok.dispatcherStates)
+            for (var i = 0; i < lok.dispatcherStates.Count; ++i)
             {
+                var dispatcher = lok.dispatcherStates[i];
+
+                // Skipped by an earlier dispatcher that turned out to run on the same thread - see below.
+                if (dispatcher.Skipped)
+                    continue;
+
+                var index = i;
                 dispatcher.Dispatcher.InvokeAsync(() =>
                 {
+                    // Any dispatcher we have not locked yet that considers *this* thread its own is backed by the same
+                    // thread as this one. Locking it too would deadlock, since this thread is about to block below and
+                    // could never run its lock closure - and it would be pointless anyway, as a single thread already
+                    // excludes itself. This check has to happen here because CheckAccess() is only meaningful when
+                    // evaluated on the thread in question.
+                    for (var j = index + 1; j < lok.dispatcherStates.Count; ++j)
+                    {
+                        var other = lok.dispatcherStates[j];
+                        if (other.Dispatcher.CheckAccess())
+                            other.Skipped = true;
+                    }
+
                     // This dispatcher is now locked...
                     dispatcher.Locked.SetResult(0);
                     // ... and blocked until it's unlocked
@@ -102,7 +135,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             }
 
             // Wait for all the dispatcher to be locked.
-            await Task.WhenAll(lok.dispatcherStates.Select(x => x.Locked.Task).Cast<Task>());
+            await Task.WhenAll(lok.dispatcherStates.Where(x => !x.Skipped).Select(x => x.Locked.Task).Cast<Task>());
             return lok;
         }
     }

@@ -71,5 +71,22 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// Triggers a re-evaluation of the active render stages.
         /// </summary>
         void TriggerActiveRenderStageReevaluation();
+
+        /// <summary>
+        /// The SDL window the game renders into on macOS/Linux (null on Windows, where
+        /// <see cref="GameContextWinforms"/>/<see cref="Stride.Editor.EditorGame.Game.GameEngineHost"/>
+        /// is used instead). Exposed so an embedding host can attach its own native composition
+        /// bridge - see StrideSdlViewport.cs's `addChildWindow` overlay technique in the
+        /// OpenDevelop fusion addin (doc/technotes/stride-game-studio.md).
+        /// </summary>
+        object SdlWindow => null;
+
+        /// <summary>
+        /// Pumps one frame of the game loop on macOS/Linux, where the game does not run its own
+        /// dedicated thread (SDL/Cocoa needs the real process main thread instead - see
+        /// <see cref="StartGame"/>'s implementation notes). No-op on Windows. Must be called from
+        /// the same thread that called <see cref="StartGame"/>.
+        /// </summary>
+        void Tick() { }
     }
 }
