@@ -19,12 +19,30 @@ using Stride.Editor.Thumbnails;
 using Stride.GameStudio.Debugging;
 using Stride.GameStudio.Helpers;
 using Stride.GameStudio.ViewModels;
+using Stride.Core.Extensions;
 
 namespace Stride.GameStudio.Plugin
 {
-    internal sealed class StrideEditorPlugin : StrideAssetsPlugin
+    // Was `internal`: OpenDevelop fusion needs to reuse this class as-is from outside
+    // Stride.GameStudio.dll (see doc/technotes/stride-game-studio.md "Real-content integration
+    // plan"). `AssetsPlugin.RegisterPlugin` gates on `type.GetConstructor(Type.EmptyTypes)`,
+    // which only finds PUBLIC constructors regardless of InternalsVisibleTo (that attribute only
+    // relaxes the C# compiler's accessibility check, not reflection's public/non-public metadata
+    // filter) - so the class itself (and therefore its implicit parameterless constructor) must
+    // be public, not just friend-visible, for RegisterPlugin(typeof(StrideEditorPlugin)) to work.
+    public sealed class StrideEditorPlugin : StrideAssetsPlugin
     {
         public bool EnableThumbnailService { get; set; } = true;
+
+        /// <summary>
+        /// Whether to start the asset preview service for the session. Defaults to true (Game Studio
+        /// has a preview pane). Hosts that do not surface asset previews should turn it off: the
+        /// service runs a second <see cref="Stride.Engine.Game"/> on a thread of its own, which is
+        /// wasted work without a preview pane, and on platforms where the engine requires the real
+        /// process main thread for windowing it does not merely idle - it throws on that thread and
+        /// takes the host process down with it.
+        /// </summary>
+        public bool EnablePreviewService { get; set; } = true;
 
         protected override void Initialize(ILogger logger)
         {
@@ -63,7 +81,7 @@ namespace Stride.GameStudio.Plugin
             var previewFactories = new Dictionary<Type, AssetPreviewFactory>();
             foreach (var stridePlugin in pluginService.Plugins.OfType<StrideAssetsPlugin>())
             {
-                var pluginTypes = stridePlugin.GetType().Assembly.GetTypes();
+                var pluginTypes = stridePlugin.GetType().Assembly.GetFullyLoadedTypes();
                 foreach (var type in pluginTypes)
                 {
                     var localType = type;
@@ -85,9 +103,13 @@ namespace Stride.GameStudio.Plugin
             session.ServiceProvider.RegisterService(builderService);
             session.ServiceProvider.RegisterService(builderService.Database); // TODO: this should be removed, the AssetBuilderService is reachable from anywhere now
 
-            var previewService = new GameStudioPreviewService(session);
-            previewService.RegisterAssetPreviewFactories(previewFactories);
-            session.ServiceProvider.RegisterService(previewService);
+            GameStudioPreviewService previewService = null;
+            if (EnablePreviewService)
+            {
+                previewService = new GameStudioPreviewService(session);
+                previewService.RegisterAssetPreviewFactories(previewFactories);
+                session.ServiceProvider.RegisterService(previewService);
+            }
 
             if (EnableThumbnailService)
             {

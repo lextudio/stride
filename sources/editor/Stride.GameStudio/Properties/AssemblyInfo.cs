@@ -5,6 +5,11 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 
 [assembly: InternalsVisibleTo("Stride.GameStudio.AutoTesting")]
+// OpenDevelop fusion (doc/technotes/stride-game-studio.md "Real-content integration plan"):
+// lets the OpenDevelop addin (and its standalone spike probes) reuse StrideEditorPlugin and
+// other Stride.GameStudio-internal types directly instead of re-implementing their logic.
+[assembly: InternalsVisibleTo("ICSharpCode.StrideGameStudio")]
+[assembly: InternalsVisibleTo("PluginServiceProbe")]
 
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information

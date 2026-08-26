@@ -4,7 +4,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>$(StrideEditorTargetFramework)</TargetFramework>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- OpenDevelop fusion: pinning win-x64 unconditionally bakes AMD64-specific machine type into the compiled IL (confirmed via PE header inspection - 0x8664, not the AnyCPU 0x14c), which fails to load at all on arm64 macOS. Restrict the pin to actual Windows builds; on other hosts this stays unset (portable/AnyCPU), matching the STRIDE_EDITOR_WINFORMS host-OS-conditional pattern already used elsewhere in this port. -->
+    <RuntimeIdentifier Condition="$([MSBuild]::IsOSPlatform('Windows'))">win-x64</RuntimeIdentifier>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <AssemblyName>Stride.GameStudio</AssemblyName>
