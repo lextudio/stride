@@ -148,6 +148,14 @@ namespace Stride.Editor.EditorGame.Game
             // Database is needed by effect compiler cache
             MicrothreadLocalDatabases.MountCommonDatabase();
 
+            // On macOS/Linux the editor game is embedded via an SDL window whose CAMetalLayer
+            // reports a polluted/doubled drawable (the MoltenVK drawable-doubling defect, see the
+            // technote). Keep OUR preferred backbuffer authoritative so the swapchain follows
+            // EditorGameController.ResizeGame() instead of the surface's currentExtent. Must be
+            // set before the device/presenter is created (setting it later - e.g. in
+            // ResizeGame - does not reach the already-built presenter's description).
+            GraphicsDeviceManager.SkipBackBufferClampToWindow = true;
+
             base.Initialize();
 
             // TODO: the physics system should not be registered by default here!

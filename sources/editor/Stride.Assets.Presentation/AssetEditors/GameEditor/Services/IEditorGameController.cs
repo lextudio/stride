@@ -88,5 +88,14 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// the same thread that called <see cref="StartGame"/>.
         /// </summary>
         void Tick() { }
+
+        /// <summary>
+        /// Resizes the game's render backbuffer to the given logical width/height (device pixels
+        /// handled by the engine from the backbuffer size). Called by an embedding host when the
+        /// overlay window is positioned/sized, so the rendered frame's aspect ratio always matches
+        /// the host element it is presented into (otherwise a default 4:3 backbuffer is stretched
+        /// into a differently-shaped window and the image is squashed). No-op on Windows.
+        /// </summary>
+        void ResizeGame(int width, int height) { }
     }
 }

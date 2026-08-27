@@ -107,6 +107,25 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
             Stride.Graphics.SDL.Application.ProcessEvents();
             sdlContext.RunCallback?.Invoke();
         }
+
+        /// <inheritdoc/>
+        public void ResizeGame(int width, int height)
+        {
+            var deviceManager = Game?.GraphicsDeviceManager;
+            if (deviceManager == null)
+                return;
+            width = Math.Max(1, width);
+            height = Math.Max(1, height);
+            // Our preferred backbuffer is authoritative (SkipBackBufferClampToWindow is set before
+            // the device is created in EditorServiceGame.Initialize); keep the presenter at the
+            // element size so the rendered frame's aspect ratio matches the host element instead of
+            // the default being stretched/squashed into it.
+            if (deviceManager.PreferredBackBufferWidth == width && deviceManager.PreferredBackBufferHeight == height)
+                return;
+            deviceManager.PreferredBackBufferWidth = width;
+            deviceManager.PreferredBackBufferHeight = height;
+            deviceManager.ApplyChanges();
+        }
 #endif
         /// <summary>
         /// The service registry.
