@@ -7,7 +7,12 @@
   "msbuild-sdks": {
     // Template packages (Stride.Templates.*) compile no code; NoTargets produces the nupkg
     // without an empty assembly, so the VS up-to-date check keys off the nupkg, not a stale pdb.
-    "Microsoft.Build.NoTargets": "3.7.134"
+    "Microsoft.Build.NoTargets": "3.7.134",
+    // OpenDevelop's Stride Game Studio addin (sources/tools/Stride.OpenDevelop.AddIn) is a WPF
+    // library that has to run inside OpenDevelop on macOS, so it builds against LibreWPF's
+    // WPF-on-macOS SDK rather than Microsoft.NET.Sdk + UseWPF. Keep the version in lock-step with
+    // OpenDevelop's own global.json - the addin is loaded into that process.
+    "LibreWPF.Sdk": "0.1.0-preview.45"
     // Uncomment if switching back to Sdk="Stride.Build.Sdk" project style (add a comma above first).
     // "Stride.Build.Sdk": "4.3.0-dev",
     // "Stride.Build.Sdk.Editor": "4.3.0-dev",
