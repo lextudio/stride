@@ -219,7 +219,7 @@ output.
 | G1 | `EmbeddedGameForm : GameForm` fails CS0246 on macOS — engine's WinForms `GameForm` only exists in the Windows-TFM build, while the editor unconditionally targets `net10.0-windows` and resolves the engine's net10.0 (SDL-only) output | `sources/editor/Stride.Editor/Engine/EmbeddedGameForm.cs(14)` | stride fork | **fixed 2026-08-24** — platform split behind `STRIDE_EDITOR_WINFORMS` (set per host OS in `sources/Directory.Build.props`); non-Windows gets headless twins |
 | G2 | Drag-drop plumbing (`EditorGameController.DragDrop.cs`) is WinForms OLE bound to the game form's HWND | same file family | stride fork | **deferred no-op** on non-Windows (`EditorGameController.DragDrop.Headless.cs`: `DoDragDrop` reports None, drop-target enable/disable no-op); real WPF-routed drops land with the frame-presenter input slice |
 | G3 | Cursor plumbing: adorners used WinForms `Cursors`; `ChangeCursor` pushed them to `GameForm.Cursor` | `UIEditor/Adorners/*`, `UIEditorGameAdornerService.Events.cs`, controller | stride fork | **fixed 2026-08-24** — adorners now use WPF `System.Windows.Input.Cursors` (same names); Windows maps WPF→WinForms cursors in `ToFormsCursor`; headless no-op until input slice |
-| G4 | Scene-editor viewport presentation | `HeadlessGameHostView`, `SceneGameRunThread`'s `GameContextHeadless()` | stride fork (+ editor-side Cocoa `addChildWindow` glue) | **live-verified in the addin, not yet in the real scene editor**: headless+readback route built and worked (milestones 2/2.1) but proved unviable (leaking/crashing GPU→CPU copy — see below); pivoted to windowed-surface (`GameContextSDL`), whose platform blocker (macOS drawable-doubling) is **resolved** (`SkipBackBufferClampToWindow`) and whose composition bridge (`addChildWindow` overlay, borderless, content-rect-anchored) is **implemented, building, and confirmed live** (fusion milestone 3: opening a `.sdpkg` shows a real GPU-presented windowed render docked in the workbench) — but that is the addin's standalone placeholder-scene `StrideSdlViewport`, NOT yet wired into the stride fork's own `EditorGameController`/`SceneGameRunThread` (still `GameContextHeadless()` there) or through input re-plumbing; swapchain-churn perf tuning is also open (non-gating) |
+| G4 | Scene-editor viewport presentation | `EditorGameController.cs` | stride fork (+ editor-side Cocoa `addChildWindow` glue) | **RESOLVED (2026-08-25/26), stale row corrected 2026-08-27**: headless+readback route (milestones 2/2.1) proved unviable (leaking/crashing GPU→CPU copy — see below); pivoted to windowed-surface, whose platform blocker (macOS drawable-doubling) is fixed (`SkipBackBufferClampToWindow`). This row previously said the composition bridge was live only in the addin's standalone placeholder viewport and NOT yet wired into `EditorGameController`/`SceneGameRunThread`'s own `GameContextHeadless()` - that is out of date. `EditorGameController.cs` now constructs a real `sdlContext = new GameContextSDL(sdlWindow, 0, 0, isUserManagingRun: true)` directly (confirmed in source: zero remaining `GameContextHeadless` references in that file); the "editor now runs, and camera input works end to end" entry below is that wiring, live, with the REAL `EditorGameEntityCameraService` responding to real OS input. Swapchain-churn perf tuning remains open (non-gating) |
 
 ### G4 feasibility probe — MEASURED blocker (2026-08-24)
 
@@ -1017,7 +1017,7 @@ Four phases, each asserting a distinct capability:
 | **1. Open** | `od.open-solution` on `FirstPersonShooter.Game.csproj`; `od.project-browser-state "FirstPersonShooter.Game"` | The project loads natively; the **virtual "Assets" node** (kind `Folder`, from the `.sdpkg` via the `IProjectTreeContributor` seam) appears under the project with `Folder`+`File` children mirroring the package's `AssetFolders` (`../Assets`, `Effects`) |
 | **2. Edit** | `od.open-file` on a game script (`Player/PlayerController.cs`); `od.active-view` | The game C# source opens in AvalonEdit (`isAvalonEdit=true`, `textLength>0`) and is the active view — the real game code is editable in the workbench |
 | **3. Inspect** | `od.project-browser-state` again; `od.active-view`; `od.solution-tree` | Tree (incl. Assets subtree) is stable after the edit; the script is still the active view; the solution reports the project's MSBuild items |
-| **4. Run** | Build the game (see below); then launch the built game executable and smoke-check it stays alive | The Stride SDK asset pipeline runs; the game binary can be launched. The run surface now exists (`od.run-project`/`od.run-status`/`od.stop-project`, 2026-08-26) and the test drives it first; `FirstPersonShooter.Game` is an asset/script library and is not startable, so the test falls back to launching the built platform-launcher binary directly and reports "run not yet verifiable" (not a failure) when this host has not produced one. **Still open**: which platform entry project a Stride game should start, and building it on macOS |
+| **4. Run** | Build the game (see below); then launch the built game executable and smoke-check it stays alive | The Stride SDK asset pipeline runs; the game binary can be launched. **RESOLVED (2026-08-26), row corrected 2026-08-27**: this used to end "Still open: which platform entry project a Stride game should start, and building it on macOS" - `StrideLauncherService` (2026-08-26 entry below) answers exactly that: it resolves or generates a `<Game>.Desktop` launcher project, adds it to the solution, and sets it as the startup project, so `od.run-project`/`od.run-status`/`od.stop-project` drive a real launched game process directly - no manual binary-launching fallback needed on a host that has run this once |
 
 DevFlow hooks relied on:
 
@@ -1056,6 +1056,37 @@ Known/expected friction to resolve when running for real (measured 2026-08-26, t
   useful contribution.
 
 ## Work log
+
+- **2026-08-27 (prefab editing verified - and it was untestable because of a real bug: the
+  addin registered the wrong file extension)** — `StridePrefabDisplayBinding` filtered
+  `\.sprefab$`. That extension does not exist in Stride: `Stride.Assets.Entities.PrefabAsset
+  .FileExtension` is `.sdprefab` (confirmed straight from the source, matching the `.sd*`
+  convention every other Stride asset extension in this addin follows - `.sdscene`, `.sdpkg`).
+  `.sprefab` was a guess made without checking the constant, which is exactly why "no `.sprefab`
+  assets exist in the samples to test against" - there was never going to be one. Fixed the
+  pattern in both `ICSharpCode.StrideGameStudio.addin` and `StridePrefabDisplayBinding.HandlesFile`.
+
+  Verified with a minimal hand-authored `TestPrefab.sdprefab` (empty `RootParts`/`Parts`, same
+  shape as a real `.sdscene` minus scene-only fields) dropped into the FirstPersonShooter sample's
+  `Assets/` folder: the virtual Assets tree picked it up with no extra wiring (assets are
+  discovered by scanning `AssetFolders` for registered extensions, not an explicit per-asset list
+  in the `.sdpkg`), double-clicking it opened `StridePrefabAssetView`
+  (`PrefabEditorViewModel`, reusing `StrideSceneEditorViewport` per the "prefab-asset display
+  binding" entry below), and `od.stride.scene-status` confirmed a live, unfaulted render
+  (`running: true`, `gameFaulted: false`, 2000+ frames). Test asset removed after verification -
+  it was never a real Stride asset, just a probe.
+
+  Also closed the two smaller items left open from the F5-addin-debugging work: `tests/
+  OpenDevelop.AddinSdk.Tests/OpenDevelop.AddinSdk.Tests.proj` now asserts the SDK emits
+  `StartAction=Program`, a `StartProgram` resolving to the host apphost, and `StartArguments`
+  carrying `-addindir:`/`-configdir:`/`-devflow:off` with no mangled trailing separator (all
+  verified passing). Modernizing `SharpDevelopAddin.xpt` to the `OpenDevelop.Addin.Sdk` shape was
+  investigated and NOT done: no C# project template in this repo (25 checked) emits an SDK-style
+  csproj at all - every one, addin or otherwise, targets the legacy MSBuild project format via
+  `<ProjectItems>`/`<Reference>`/`<PropertyGroup>` items in the `.xpt`. Reskinning just the addin
+  template would require inventing SDK-style template-engine support that doesn't exist anywhere
+  else in the codebase - a repo-wide template-engine gap, not an addin-specific one, and well
+  outside today's scope. Left as a real open item, correctly scoped this time.
 
 - **2026-08-27 (both deferred tech-debt items from the move closed - raw references converted
   to ProjectReference/PackageReference; the host-bin write-back removed)** — Both items flagged as

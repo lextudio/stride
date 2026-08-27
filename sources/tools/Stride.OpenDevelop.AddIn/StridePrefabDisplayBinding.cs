@@ -1,13 +1,16 @@
 // Copyright (c) 2026 LeXtudio. MIT-licensed (see repository root LICENSE).
 //
-// Prefab-asset display binding for .sprefab files: opens a Stride prefab in the fused prefab
+// Prefab-asset display binding for .sdprefab files (Stride.Assets.Entities.PrefabAsset.FileExtension -
+// ".sprefab" was a wrong guess made before checking the actual constant; no such extension
+// exists in Stride, which is why no .sprefab sample was ever found to test against - see the
+// technote): opens a Stride prefab in the fused prefab
 // editor, reusing the real EditorGameController path that StridePackageView already drives.
 // Double-clicking a prefab asset in the Projects pad's .sdpkg Assets subtree routes here through
 // the normal workbench open path (the contributor's file nodes carry the asset's real on-disk path).
 //
 // One-session/one-overlay constraint carried from StrideEditorHost: only one Stride package can be
 // open at a time (matching real Game Studio's one-project-per-process model), and the prefab editor
-// owns a single native overlay window. Opening a .sprefab from a different package than the one
+// owns a single native overlay window. Opening a .sdprefab from a different package than the one
 // already open reports that explicitly instead of breaking the already-visible editor.
 
 using System;
@@ -37,7 +40,7 @@ namespace ICSharpCode.StrideGameStudio
 		public bool IsPreferredBindingForFile(FileName fileName) => CanCreateContentForFile(fileName);
 
 		public bool CanCreateContentForFile(FileName fileName)
-			=> string.Equals(Path.GetExtension(fileName), ".sprefab", StringComparison.OrdinalIgnoreCase);
+			=> string.Equals(Path.GetExtension(fileName), ".sdprefab", StringComparison.OrdinalIgnoreCase);
 
 		public double AutoDetectFileContent(FileName fileName, Stream fileContent, string detectedMimeType) => 0;
 
