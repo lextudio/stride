@@ -1057,6 +1057,68 @@ Known/expected friction to resolve when running for real (measured 2026-08-26, t
 
 ## Work log
 
+- **2026-08-27 (both deferred tech-debt items from the move closed - raw references converted
+  to ProjectReference/PackageReference; the host-bin write-back removed)** — Both items flagged as
+  "still open" when the addin moved into this repo are done, both verified live end to end
+  afterward (full `StrideGameStudioIntegrationTests` suite: 2/2 pass).
+
+  **1. The ~40 raw `<Reference><HintPath>` entries are now real references.** Every Stride source
+  project (asset core, engine closure, editor closure - ~28 projects) is a `ProjectReference`;
+  every NuGet-backed one (ServiceWire, Vortice.Vulkan, Silk.NET.*, SixLabors.ImageSharp,
+  LibreWPF.ProGPU, NuGet.ProjectModel) is a `PackageReference`, mostly picking up its version for
+  free from `sources/Directory.Packages.props` (this project is under `sources/`, so central
+  package management applies automatically) - `VersionOverride` only where a package isn't
+  centrally listed (Silk.NET.Core, Silk.NET.Windowing.Common, LibreWPF.ProGPU).
+
+  This is not just cosmetic: it closes a previously-documented real bug (see below, "build trap")
+  where rebuilding a leaf Stride project without also rebuilding `Stride.GameStudio` silently left
+  the addin running yesterday's engine code, because `Stride.GameStudio`'s bin folder was the
+  aggregation point a wholesale copy pulled from. A `ProjectReference` makes MSBuild build
+  everything in dependency order before this addin, every time - the trap can no longer happen by
+  construction.
+
+  Three genuine complications surfaced converting this, all fixed:
+  - **A parallel-build race in Stride's own `StrideAssemblyProcessor`** (Mono.Cecil's
+    `ModuleWriter.WriteModule` throwing "Unexpected error", non-deterministically). Confirmed NOT a
+    real defect: every affected project builds clean standalone, and the whole graph builds clean
+    under `-m:1`. Nothing like this had ever run before - these ~15 engine/editor projects had
+    always been built independently, one at a time, and only ever consumed as finished binaries;
+    building them TOGETHER, in parallel, as one dependency graph was new. Fixed with
+    `<BuildInParallel>false</BuildInParallel>` in the addin's own `<PropertyGroup>` - project-local,
+    so it applies no matter how `dotnet build`/`pack` is invoked, with no external flags required.
+  - **A new `ICSharpCode.AvalonEdit` version conflict.** Real `PackageReference`s (e.g.
+    `LibreWPF.ProGPU`) now bring their own transitive NuGet resolution into the graph, which
+    resolved its own (older, 6.3.1.120) `AvalonEdit` copy - competing with the addin's HintPath
+    reference to the exact build OpenDevelop's host ships (6.3.2.0) and producing
+    `CS1705: uses a higher version than referenced assembly`. Fixed by packing OpenDevelop's own
+    `src/Libraries/AvalonEdit/ICSharpCode.AvalonEdit.csproj` (`-p:Version=6.3.2`) into the same
+    local feed LibreWPF/ProGPU already use, mapping `ICSharpCode.AvalonEdit` to that source in
+    Stride's `nuget.config`, and referencing it as an explicit
+    `PackageReference ... VersionOverride="6.3.2"` - pinning the winning version instead of leaving
+    it to accident.
+  - **A shadowing `global.json`.** `src/Libraries/AvalonEdit/global.json` (a vendored file from
+    pulling in upstream AvalonEdit's own source tree, pinning only the .NET SDK version) is nearer
+    than the repo-root one to `ICSharpCode.AvalonEdit.csproj`, so a STANDALONE `dotnet pack`/`build`
+    of that one project alone can't resolve `LibreWPF.Sdk` at all (`MSB4236`) - it only ever worked
+    as part of a full-solution build, where the SDK resolver apparently caches an
+    already-resolved SDK name+version process-wide. Worked around with a temporary,
+    immediately-deleted `global.json` directly in the project's own folder (nearer still, so it
+    wins) carrying the `msbuild-sdks` entry - a one-shot packing aid, not a permanent repo change.
+
+  **2. The two-way write-back into OpenDevelop's own host bin is gone.** `CopyStrideRuntimes` no
+  longer copies `libSDL2-2.0.dylib` or `libvulkan.1.dylib`/`MoltenVK_icd.json` into
+  `$(OpenDevelopHostBin)`. `StrideEditorHost`'s static constructor already preloads both by
+  absolute path (`NativeLibrary.Load`) before either Silk.NET.SDL's own by-name loader or SDL2's
+  internal `SDL_Vulkan_LoadLibrary` ever runs (the SDL2 preload predates this session; the Vulkan
+  one is today's earlier entry) - the host-bin copies were redundant once that landed. Verified by
+  physically moving both files out of OpenDevelop's bin folder and re-running the live scene test:
+  clean start, `gameFaulted: false`, thousands of frames rendered, and a real right-drag +
+  `keydown:w` still moved the camera and set `controlling: true`. One nuance found along the way:
+  removing SDL2's copy ALONE (Vulkan's still present) broke SDL loading immediately
+  (`Silk.NET.SDL.Sdl.GetApi()` → `FileNotFoundException`) - so the preload trick is genuinely
+  necessary for SDL2, not just "nice to also do"; it was the Vulkan copy alone that turned out to
+  be the truly redundant half. Both are confirmed gone now, together, with no regression.
+
 - **2026-08-27 (real keyboard injection added to DevFlow; WASD camera movement verified end to
   end - closing the last open item from the input-plumbing arc)** — The keyboard-forwarding gap
   recorded below ("written, not yet working" / "DevFlow's key action answers

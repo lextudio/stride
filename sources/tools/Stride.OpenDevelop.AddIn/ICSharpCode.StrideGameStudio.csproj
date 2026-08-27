@@ -25,6 +25,16 @@
     <!-- Engine-repo conventions this project opts out of, same as Stride.VisualStudio.Package. -->
     <StrideAssemblyProcessor>false</StrideAssemblyProcessor>
     <StrideSkipAutoPack>true</StrideSkipAutoPack>
+    <!-- The ProjectReferences below make MSBuild build ~15 Stride engine/editor projects as part
+         of THIS project's own graph - something nothing in the Stride repo's own build ever did
+         before (those projects were always built independently, then referenced as finished
+         binaries). Building them together, in parallel, races Stride's own StrideAssemblyProcessor
+         post-build IL step: Mono.Cecil's ModuleWriter.WriteModule threw "Unexpected error"
+         non-deterministically (confirmed NOT a real defect - every one of those projects builds
+         clean standalone, and the whole graph builds clean under -m:1). BuildInParallel is the
+         project-local, no-external-flags-required way to force this graph sequential regardless of
+         how `dotnet build`/`dotnet pack` is invoked. -->
+    <BuildInParallel>false</BuildInParallel>
   </PropertyGroup>
   <!-- OpenDevelop's Addin SDK is auto-imported for every project inside the OpenDevelop repo by
        its Directory.Build.targets; out here it has to be imported explicitly. Same pattern as
@@ -52,22 +62,33 @@
   <ItemGroup>
     <!-- OpenDevelop host assemblies. Private=false throughout: the host owns these types at
          runtime, and a second copy in the addin folder would be a different instance of the same
-         types (addin discovery and [DevFlowAction] discovery would both stop matching). -->
-    <Reference Include="ICSharpCode.SharpDevelop">
-      <HintPath>$(OpenDevelopHostBin)ICSharpCode.SharpDevelop.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="ICSharpCode.Core">
-      <HintPath>$(OpenDevelopHostBin)ICSharpCode.Core.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+         types (addin discovery and [DevFlowAction] discovery would both stop matching).
+         PackageReference, not HintPath: packed from OpenDevelop (`dotnet pack <project>
+         -p:Version=5.2.0`, same version across the whole closure) so this project's COMPILE-TIME
+         closure no longer needs $(OpenDevelopRoot) to point at an OpenDevelop source checkout -
+         only $(OpenDevelopHostBin) (a built host OUTPUT) is still needed, and only at runtime
+         (addin loading) and for the two host-bin HintPaths still below (DevFlow, and
+         OpenDevelopDebugHost in the SDK). -->
+    <PackageReference Include="ICSharpCode.SharpDevelop" VersionOverride="5.2.0"><Private>false</Private></PackageReference>
+    <PackageReference Include="ICSharpCode.Core" VersionOverride="5.2.0"><Private>false</Private></PackageReference>
+    <!-- NU1107: OpenDevelop's own Roslyn closure (via ICSharpCode.SharpDevelop ->
+         Microsoft.CodeAnalysis.CSharp.Features) needs 5.6.0, while Stride.Assets.Presentation's
+         Microsoft.CodeAnalysis.CSharp.Scripting 5.3.0 pins Microsoft.CodeAnalysis.Scripting.Common
+         to exactly (=) 5.3.0 - not a floor, so NuGet cannot auto-unify. Force the higher version
+         directly, matching what OpenDevelop's own host actually runs (and what every other
+         Microsoft.CodeAnalysis.* package here already resolves to). -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Scripting.Common" VersionOverride="5.6.0" />
     <!-- Reached transitively through ICSharpCode.SharpDevelop's public surface (RichText on the
          output/logging APIs). It came in for free while this project referenced
-         ICSharpCode.SharpDevelop.csproj; against binaries it has to be named. -->
-    <Reference Include="ICSharpCode.AvalonEdit">
-      <HintPath>$(OpenDevelopHostBin)ICSharpCode.AvalonEdit.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+         ICSharpCode.SharpDevelop.csproj; against binaries it has to be named.
+         A PackageReference, not a HintPath: once the engine-closure ProjectReferences below pull
+         in real NuGet resolution (LibreWPF.ProGPU etc.), a transitive AvalonEdit dependency from
+         THAT graph competes with a bare HintPath and NuGet's own resolved (older) version wins -
+         CS1705 "uses a higher version than referenced assembly". An explicit PackageReference,
+         pinned to the exact build OpenDevelop's host ships (packed to the local feed from
+         src/Libraries/AvalonEdit/ICSharpCode.AvalonEdit), makes this the winning version instead
+         of an accidental one. -->
+    <PackageReference Include="ICSharpCode.AvalonEdit" VersionOverride="6.3.2" />
     <!-- For the [DevFlowAction] diagnostics in StrideGameStudioDevFlowActions. Private=false: the
          host already loads this assembly (it runs the agent), and a second copy in the addin folder
          would be a different instance of the same attribute types, so discovery would not match. -->
@@ -92,52 +113,44 @@
        only the asset core travels with the addin; scene-editor hosting layers join in later
        slices. Private=true so they deploy next to this addin's dll. -->
   <ItemGroup>
-    <Reference Include="Stride.Core">
-      <HintPath>$(StrideRoot)sources\core\Stride.Core\bin\Debug\net10.0\Stride.Core.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
-    <Reference Include="Stride.Core.Assets">
-      <HintPath>$(StrideRoot)sources\assets\Stride.Core.Assets\bin\Debug\net10.0\Stride.Core.Assets.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
+    <ProjectReference Include="..\..\core\Stride.Core\Stride.Core.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\assets\Stride.Core.Assets\Stride.Core.Assets.csproj"><Private>true</Private></ProjectReference>
     <!-- PackageVersion/UFile (touched by Meta.Version and AssetItem.Location) live here. -->
-    <Reference Include="Stride.Core.Design">
-      <HintPath>$(StrideRoot)sources\assets\Stride.Core.Assets\bin\Debug\net10.0\Stride.Core.Design.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
-    <!-- Transitive NuGet deps of the Stride asset core that MSBuild's reference resolution
-         does NOT copy (they are not project outputs). Stride.Core.Assets' module initializer
-         binds ServiceWire at first touch - missing it killed the view with a
-         TypeInitializationException on open. Keep in lock-step with stride's packages. -->
-    <Reference Include="ServiceWire">
-      <HintPath>$([System.IO.Path]::GetFullPath('$(NuGetPackageRoot)servicewire/5.6.0/lib/netstandard2.0/ServiceWire.dll'))</HintPath>
-      <Private>true</Private>
-    </Reference>
+    <ProjectReference Include="..\..\core\Stride.Core.Design\Stride.Core.Design.csproj"><Private>true</Private></ProjectReference>
+    <!-- Transitive NuGet dep of the Stride asset core that a ProjectReference does NOT pull in
+         copy-local on its own (it is not one of THAT project's own outputs). Stride.Core.Assets'
+         module initializer binds ServiceWire at first touch - missing it killed the view with a
+         TypeInitializationException on open. Centrally versioned by sources/Directory.Packages.props
+         (this project is under sources/, so it inherits that automatically) - stays in lock-step
+         with Stride's own packages with no version to maintain here. -->
+    <PackageReference Include="ServiceWire" />
   </ItemGroup>
   <!-- Engine closure for the LIVE viewport (fusion milestone 2). The headless Game renders a
        frame every tick; the presenter shows it. Private=true so they deploy next to this addin. -->
   <ItemGroup>
-    <Reference Include="Stride.Engine"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Engine.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Games"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Games.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Graphics"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Graphics.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Input"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Input.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Rendering"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Rendering.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Shaders"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Shaders.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Shaders.Effects"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Shaders.Effects.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Shaders.Compilers"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Shaders.Compilers.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Shaders.Parsers"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Shaders.Parsers.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Shaders.Spirv"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Shaders.Spirv.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Core"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Core.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Core.IO"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Core.IO.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Core.Mathematics"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Core.Mathematics.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Core.MicroThreading"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Core.MicroThreading.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Core.Serialization"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Core.Serialization.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Foundation"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Foundation.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.Audio"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.Audio.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Stride.VirtualReality"><HintPath>$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\Stride.VirtualReality.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Vortice.Vulkan"><HintPath>$(HOME)/.nuget/packages/vortice.vulkan/3.0.3/lib/net9.0/Vortice.Vulkan.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Silk.NET.Core"><HintPath>$(HOME)/.nuget/packages/silk.net.core/2.23.0/lib/netstandard2.0/Silk.NET.Core.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="SixLabors.ImageSharp"><HintPath>$(HOME)/.nuget/packages/sixlabors.imagesharp/3.1.12/lib/net6.0/SixLabors.ImageSharp.dll</HintPath><Private>true</Private></Reference>
+    <ProjectReference Include="..\..\engine\Stride.Engine\Stride.Engine.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.Games\Stride.Games.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.Graphics\Stride.Graphics.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.Input\Stride.Input.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.Rendering\Stride.Rendering.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\shaders\Stride.Shaders\Stride.Shaders.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\shaders\Stride.Shaders.Effects\Stride.Shaders.Effects.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\shaders\Stride.Shaders.Compilers\Stride.Shaders.Compilers.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\shaders\Stride.Shaders.Parsers\Stride.Shaders.Parsers.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\shaders\Stride.Shaders.Spirv\Stride.Shaders.Spirv.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\core\Stride.Core.IO\Stride.Core.IO.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\core\Stride.Core.Mathematics\Stride.Core.Mathematics.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\core\Stride.Core.MicroThreading\Stride.Core.MicroThreading.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\core\Stride.Core.Serialization\Stride.Core.Serialization.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.Foundation\Stride.Foundation.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.Audio\Stride.Audio.csproj"><Private>true</Private></ProjectReference>
+    <ProjectReference Include="..\..\engine\Stride.VirtualReality\Stride.VirtualReality.csproj"><Private>true</Private></ProjectReference>
+    <PackageReference Include="Vortice.Vulkan" />
+    <!-- Not in sources/Directory.Packages.props (only pulled in transitively elsewhere in Stride's
+         own graph) - VersionOverride is CPM's supported per-project escape hatch, so this stays a
+         one-line override instead of adding an addin-only entry to the shared central file. -->
+    <PackageReference Include="Silk.NET.Core" VersionOverride="2.23.0" />
+    <PackageReference Include="SixLabors.ImageSharp" />
   </ItemGroup>
   <!-- Windowed viewport (supersedes the headless+readback route, see
        doc/technotes/stride-game-studio.md "G4 viewport stability/perf investigation" and
@@ -146,9 +159,12 @@
        entry point (ProGpuWpfDiagnostics.TryGetWindowHost) + Silk.NET.Windowing's own
        INativeWindow.Cocoa. -->
   <ItemGroup>
-    <Reference Include="Silk.NET.SDL"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Silk.NET.SDL.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="Silk.NET.Windowing.Common"><HintPath>$(HOME)/.nuget/packages/silk.net.windowing.common/2.23.0/lib/netstandard2.1/Silk.NET.Windowing.Common.dll</HintPath><Private>true</Private></Reference>
-    <Reference Include="ProGPU.Wpf"><HintPath>$(HOME)/.nuget/packages/librewpf.progpu/0.1.0-preview.45/lib/net10.0/ProGPU.Wpf.dll</HintPath><Private>true</Private></Reference>
+    <!-- Centrally versioned as "Silk.NET.Sdl" (lowercase "dl") in sources/Directory.Packages.props;
+         the package id itself is case-insensitive at restore, kept as "Silk.NET.SDL" here to match
+         the assembly/type name used throughout this project's own code. -->
+    <PackageReference Include="Silk.NET.SDL" />
+    <PackageReference Include="Silk.NET.Windowing.Common" VersionOverride="2.23.0" />
+    <PackageReference Include="LibreWPF.ProGPU" VersionOverride="0.1.0-preview.45" />
   </ItemGroup>
   <!-- Real-content integration (doc/technotes/stride-game-studio.md "Real-content integration
        plan"): SessionViewModel/EditorViewModel/AssetsPlugin/PluginService/StrideEditorPlugin, all
@@ -158,24 +174,30 @@
        the same "copy the whole bin folder next to ours" approach already proven for the engine
        closure, rather than hand-listing every transitive dependency. -->
   <ItemGroup>
-    <Reference Include="Stride.Core.Assets.Editor"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Core.Assets.Editor.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Stride.Assets.Presentation"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Assets.Presentation.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Stride.GameStudio"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.GameStudio.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Stride.Editor"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Editor.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Stride.Core.Presentation"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Core.Presentation.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Stride.Core.Presentation.Wpf"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Core.Presentation.Wpf.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Stride.Core.Translation"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Core.Translation.dll</HintPath><Private>false</Private></Reference>
+    <!-- ProjectReference (not just compile-time-only HintPaths anymore) also fixes a real,
+         previously-documented staleness trap: Stride.GameStudio's bin folder is the aggregation
+         point CopyGameStudioEditorClosure copies wholesale below, so rebuilding a leaf project
+         like Stride.Core.Assets without ALSO rebuilding Stride.GameStudio silently left this addin
+         running yesterday's engine code (see the technote's "build trap" entry). A ProjectReference
+         makes MSBuild build these in dependency order before this addin, every time - the trap can
+         no longer happen by construction. -->
+    <ProjectReference Include="..\..\editor\Stride.Core.Assets.Editor\Stride.Core.Assets.Editor.csproj"><Private>false</Private></ProjectReference>
+    <ProjectReference Include="..\..\editor\Stride.Assets.Presentation\Stride.Assets.Presentation.csproj"><Private>false</Private></ProjectReference>
+    <ProjectReference Include="..\..\editor\Stride.GameStudio\Stride.GameStudio.csproj"><Private>false</Private></ProjectReference>
+    <ProjectReference Include="..\..\editor\Stride.Editor\Stride.Editor.csproj"><Private>false</Private></ProjectReference>
+    <ProjectReference Include="..\..\presentation\Stride.Core.Presentation\Stride.Core.Presentation.csproj"><Private>false</Private></ProjectReference>
+    <ProjectReference Include="..\..\presentation\Stride.Core.Presentation.Wpf\Stride.Core.Presentation.Wpf.csproj"><Private>false</Private></ProjectReference>
+    <ProjectReference Include="..\..\core\Stride.Core.Translation\Stride.Core.Translation.csproj"><Private>false</Private></ProjectReference>
     <!-- SceneAsset (real entity/transform data for gap 2's viewport rendering) lives here. -->
-    <Reference Include="Stride.Assets"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.Assets.dll</HintPath><Private>false</Private></Reference>
+    <ProjectReference Include="..\..\engine\Stride.Assets\Stride.Assets.csproj"><Private>false</Private></ProjectReference>
     <!-- PackageSession.UpdateDependencies (opening a session whose package has a referenced
-         .csproj) touches NuGet.ProjectModel's LockFileFormat directly - not one of our own
-         <Reference> items, so it was never a real SDK-recognized reference. Wildcard-copying it
-         via CopyGameStudioEditorClosure alone didn't stick: the SDK's own incremental-clean step
-         deleted it on every subsequent build as an "unrecognized" file (confirmed via `-v:normal`
-         showing "Copying file... NuGet.ProjectModel.dll" immediately followed by "Deleting file
-         ...NuGet.ProjectModel.dll" in the same build). Making it a real Reference puts it through
-         the SDK's own copy-local pipeline instead, which the incremental-clean step DOES track. -->
-    <Reference Include="NuGet.ProjectModel"><HintPath>$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\NuGet.ProjectModel.dll</HintPath><Private>true</Private></Reference>
+         .csproj) touches NuGet.ProjectModel's LockFileFormat directly - not a compile-time
+         reference of ours, so it needs its own explicit reference to land in this addin's output
+         (Private=true, unlike the editor closure above). Centrally versioned at 7.3.1 in
+         sources/Directory.Packages.props, which matches the exact strong name
+         (7.3.1.0) Stride's own PackageSession.Dependencies needs - see the OpenDevelopAlwaysCopy
+         note above for why the host's own, different-versioned copy cannot substitute for it. -->
+    <PackageReference Include="NuGet.ProjectModel" />
   </ItemGroup>
   <Target Name="CopyStrideRuntimes" AfterTargets="Build">
     <ItemGroup>
@@ -210,24 +232,14 @@
          addin's own root, so it needs its own copy of the runtimes tree placed there too. -->
     <Copy SourceFiles="@(StrideRt)" DestinationFiles="@(StrideRt->'$(OutputPath)Vulkan\runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(NativeSdl)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
-    <!-- Silk.NET.SDL's DefaultPathResolver.BaseDirectoryResolver only ever probes
-         AppContext.BaseDirectory (the MAIN app's own output folder, not this addin's output
-         folder) for a bare library name like "libSDL2-2.0.dylib" - confirmed via a standalone
-         probe against the decompiled resolver chain (DefaultPathResolver/PassthroughResolver
-         only try the OS's default dlopen search, which needs DYLD_LIBRARY_PATH - stripped by
-         macOS SIP, see StrideEditorHost.cs). So the dylib must ALSO land next to OpenDevelop's
-         own executable, not just next to this addin's assembly. -->
-    <Copy SourceFiles="@(NativeSdl)" DestinationFolder="$(OpenDevelopHostBin)" SkipUnchangedFiles="true" Condition="Exists('$(OpenDevelopHostBin)')" />
-    <!-- Same "bare-name native loaders only probe the MAIN app's own output folder" pattern as
-         SDL2 above, applied to Vortice.Vulkan's loader for libvulkan.1.dylib (which fronts
-         MoltenVK here) - "Failed to load Vulkan Portability library" when only the addin folder
-         had a copy. Not yet 100% confirmed same root cause as SDL2 (Vortice uses its own loader,
-         not Silk.NET's), but costs nothing to also place it next to the main app's exe. -->
-    <ItemGroup>
-      <NativeVulkan Include="$(OutputPath)runtimes\osx-arm64\native\libvulkan.1.dylib" Condition="Exists('$(OutputPath)runtimes\osx-arm64\native\libvulkan.1.dylib')" />
-      <NativeVulkan Include="$(OutputPath)runtimes\osx-arm64\native\MoltenVK_icd.json" Condition="Exists('$(OutputPath)runtimes\osx-arm64\native\MoltenVK_icd.json')" />
-    </ItemGroup>
-    <Copy SourceFiles="@(NativeVulkan)" DestinationFolder="$(OpenDevelopHostBin)" SkipUnchangedFiles="true" Condition="Exists('$(OpenDevelopHostBin)')" />
+    <!-- The two-way write-back into OpenDevelop's own host bin (previously required here for
+         libSDL2-2.0.dylib and libvulkan.1.dylib/MoltenVK_icd.json - "bare-name native loaders only
+         probe AppContext.BaseDirectory") is gone. StrideEditorHost's static constructor now
+         preloads both dylibs into the process by absolute path (NativeLibrary.Load) before either
+         Silk.NET.SDL's own by-name loader or SDL2's internal SDL_Vulkan_LoadLibrary ever runs, so
+         the copy is no longer needed. Verified live (2026-08-27): both files removed from
+         OpenDevelop's bin, scene editor still starts clean, camera still moves under a real
+         right-drag + keydown:w. -->
   </Target>
   <!-- Wholesale copy of Stride.GameStudio's own bin output: this is a plain net10.0-windows IL
        folder (AppendRuntimeIdentifierToOutputPath=false), so copying it next to this addin's own
