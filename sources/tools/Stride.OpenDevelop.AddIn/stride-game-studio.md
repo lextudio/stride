@@ -1057,6 +1057,196 @@ Known/expected friction to resolve when running for real (measured 2026-08-26, t
 
 ## Work log
 
+- **2026-08-27 (real keyboard injection added to DevFlow; WASD camera movement verified end to
+  end - closing the last open item from the input-plumbing arc)** — The keyboard-forwarding gap
+  recorded below ("written, not yet working" / "DevFlow's key action answers
+  simulationMode: semantic - it cannot produce a real KeyDown") is closed. Along the way, two
+  unrelated bugs surfaced and were fixed because they were blocking verification.
+
+  **1. cliclick/CliclickSharp never supported letters or digits.** `kp`/`kd`/`ku` only ever had
+  named special keys (return/tab/arrows/f1-f16/...) - the exact same shape of gap as the
+  mouse-button story (2026-08-25 entries below): cliclick's right/middle-button drag was added to
+  the bundled CliclickSharp fork, but nobody had needed a letter key yet. Fixed in
+  `wpf-labs/external/cliclick-sharp`: `KeyBaseAction.SupportedKeycodes` gained the full QWERTY
+  letter/digit set (macOS ANSI virtual keycodes, e.g. `kVK_ANSI_W = 0x0D`), and `KeyDownAction`/
+  `KeyUpAction` (previously modifier-only: alt/cmd/ctrl/fn/shift) now fall back to that same table,
+  so `kd:w`/`ku:w` can hold an ordinary key down across several frames - `kp:w` alone cannot, since
+  it presses and releases in one call with no way to hold.
+
+  **2. DevFlow had no real (non-semantic) keyboard injection at all.** `TryKeyAsync`'s only real
+  path needs an `elementId` and drives Windows-only `SendInput`; with none it just returns
+  `simulationMode: "semantic"` (AutomationPeer-level, never reaches SDL or even most WPF `KeyDown`
+  handlers - the same class of dead end `tap` was for mouse before `cliclick`). Added, mirroring
+  the existing press/drag-move/release mouse triple exactly: `POST /api/v1/ui/actions/keydown` and
+  `/keyup` (`{"key":"w"}`), `CliclickInput.TryKeyDown`/`TryKeyUp` (the same "spawn a holder process
+  with `w:600000` as a 10-minute safety net, real release is a separate invocation" trick already
+  proven for mouse-button holds - the CGEvent-level down state persists system-wide independent of
+  which process posted it, so the holder process is a safety valve, not the actual mechanism), both
+  wired into `WpfAgentService`. Rebuilt the CliclickSharp universal binary (`publish.sh`), repacked
+  `LeXtudio.DevFlow.Agent.Core`/`.LibreWpf` at the SAME version (0.2.3) into the local feed, and
+  had to clear `~/.nuget/packages/lextudio.devflow.agent.*/0.2.3` by hand - NuGet's global-packages
+  cache assumes a version number is immutable once extracted, so overwriting a `.nupkg` in a local
+  feed silently serves the OLD extracted content until that cache entry is deleted.
+
+  Verified the injection layer in isolation first, deliberately outside the fragile scene editor:
+  opened a plain `.cs` file in AvalonEdit, `keydown:x` + `keyup:x`, and the document's `textLength`
+  and `caretColumn` both advanced with `textPreview` showing a literal `x` typed at the caret - a
+  real OS-level keystroke, not a semantic/AutomationPeer event.
+
+  **3. The scene editor itself would not start at all - "Cannot allocate SDL Window: Failed to
+  load Vulkan Portability library", 100% reproducible, unrelated to the keyboard work.** Root
+  cause: a window created with the SDL Vulkan flag makes SDL2 do its OWN internal Vulkan loading
+  (`SDL_Vulkan_LoadLibrary(NULL)` inside libSDL2 itself - a raw C `dlopen("libvulkan.1.dylib")`
+  with zero knowledge of .NET or `AppContext.BaseDirectory`), a COMPLETELY separate code path from
+  the game's own Vortice.Vulkan-based managed P/Invoke (which .NET's own native-library probing
+  resolves against `AppContext.BaseDirectory` without any help - confirmed working standalone
+  earlier, see the "launcher probe" and "launcher implemented" entries). Two things were tried:
+  - Setting the `SDL_VULKAN_LIBRARY` environment variable to the addin's own
+    `runtimes/osx-arm64/native/libvulkan.1.dylib` (a real, embedded string in this exact
+    `libSDL2-2.0.dylib`, confirmed via `strings`). **Measured NOT sufficient on its own** - still
+    failed 100% of the time with the env var correctly set to an existing file.
+  - **What worked**: the SAME trick this file already uses for `libSDL2-2.0.dylib` two lines above
+    (`StrideEditorHost`'s static constructor) - preload the dylib into the process by absolute path
+    via `NativeLibrary.Load` BEFORE SDL2 ever calls `SDL_Vulkan_LoadLibrary`. Confirmed via
+    `otool -D` that `libvulkan.1.dylib`'s Mach-O install name is the bare `libvulkan.1.dylib` SDL2
+    dlopens by default, so a subsequent bare `dlopen("libvulkan.1.dylib")` matches the
+    already-loaded image by install name and never needs to resolve a path at all. Kept both fixes
+    (the env var is cheap insurance; the preload is what actually closes the gap) - see
+    `StrideEditorHost.cs`.
+
+  **4. A second, independent bug the Vulkan failure had been masking: a failed scene-open
+  permanently poisoned the process.** `SessionViewModel.OpenSession` unconditionally
+  `RegisterService()`s four session-scoped services onto whatever `ViewModelServiceProvider` it is
+  given, with no matching unregister on failure - correct in real GameStudio, which builds a fresh
+  provider every time a solution opens, but this addin deliberately keeps ONE `editor`/provider for
+  the process's lifetime (see the class doc comment: "matching real Game Studio's
+  one-session-per-process model"). So a first `OpenSessionAsync` that failed for ANY reason (the
+  Vulkan failure above, but the bug is general) left `editor.Session == null` while the provider
+  already carried those four registrations - and a retry, even for the exact same path, then died
+  in `SessionViewModel.OpenSession`'s very first `RegisterService` call with `InvalidOperationException:
+  A service of the same type has already been registered`, masking whatever the real first failure
+  was. Fixed by splitting `Initialize()` into `EnsurePluginsRegistered()` (genuinely once-per-process
+  - `AssetsPlugin.RegisterPlugin` adds to AssetsPlugin's own static list and throws on a second call,
+  so this half must never re-run) and `RebuildEditor()` (cheap: a fresh `ViewModelServiceProvider` +
+  a fresh `OpenDevelopEditorViewModel`, safe to repeat). `OpenSessionAsync` now discards
+  `editor`/`openSessionPath` in a `catch` around the open attempt, so the NEXT call starts from a
+  clean provider instead of re-throwing the same collision forever regardless of the original cause.
+
+  **Full end-to-end verification, real OS input throughout**: opened `FirstPersonShooter.Game`,
+  opened `MainScene.sdscene` - scene came up (`gameFaulted: false`, `ScriptSystem` running 12
+  microthreads, real `EditorGameEntityCameraService`); clicked the viewport at its `screenRect`
+  centre (`gotKbFocus`/`isKbFocused` confirmed true); `keydown:w` alone moved nothing
+  (`controlling: false` - WASD is correctly gated behind an active look-around, matching every
+  conventional 3D editor); held a real right-button drag (`controlling: true`) **and** `keydown:w`
+  together: camera position moved from `(4.000, 2.000, 4.000)` to `(-2.540, -0.478, -2.540)`. Keys
+  and mouse both released cleanly afterward.
+
+- **2026-08-27 (the DAP debugger was broken by addin trimming - fixed; addin breakpoints now
+  verified end to end)** — The "debugger is broken on this machine" note in the entry below had a
+  real, and instructive, cause.
+
+  **Symptom chain, outermost first**: every debug session failed with
+  `ObjectDisposedException: ... 'System.Threading.SemaphoreSlim'` from
+  `DapClient.SendRequestAsync`. That is only the wreckage - it is the `finally { requestLock
+  .Release(); }` of a request still in flight when the session was torn down. The torn-down
+  session was itself a symptom: the very first `initialize` request never got an answer because
+  **the SharpDbg adapter process exited with code 1, silently** (nothing on stdout or stderr).
+  Running it by hand with `--engineLogging=` finally produced the real error:
+  `Could not load file or assembly 'Newtonsoft.Json, Version=13.0.0.0'`.
+
+  **Root cause**: `OpenDevelop.Addin.Sdk`'s `OpenDevelopTrimAddinOutput` deletes any DLL from an
+  addin's output whose filename also exists in the host bin, because an in-process addin can
+  resolve those from the host's base directory. But `AddIns/Debugger/` also contains
+  **`SharpDbg.Cli`, an out-of-process program** that resolves through its own `deps.json`, from its
+  own directory - it has no such fallback. Five assemblies of its closure were being deleted:
+  `Newtonsoft.Json`, `Microsoft.CodeAnalysis`, `Microsoft.CodeAnalysis.CSharp`,
+  `Microsoft.Extensions.DependencyInjection.Abstractions`, `Microsoft.Extensions.Logging.Abstractions`.
+
+  The SDK does exempt out-of-process programs - but the exemption is **path-based** (`.../Host/`
+  folders, `OpenDevelopAddinKind=OutOfProcessHost`), and `AddIns/Debugger/` is a counterexample the
+  heuristic misses: an out-of-process program deployed inside an `InProcess` addin's folder.
+
+  **Fix** (`Debugger.AddIn.csproj`): `CopySharpDbgToAddInOutput` now also declares its copied DLLs
+  as `OpenDevelopAlwaysCopy`, and gained `BeforeTargets="OpenDevelopTrimAddinOutput"`. The ordering
+  is load-bearing - both targets ran `AfterTargets="Build"` with no declared order, and the trim
+  was running second and stripping the adapter's dependencies back out. Deriving the exemption from
+  the same item list that does the copy keeps it correct as SharpDbg's closure changes, instead of
+  hard-coding five names that would silently rot.
+
+  A blunter fix - skip trimming for any folder containing a foreign `*.runtimeconfig.json` - was
+  rejected: `MSBuild.runtimeconfig.json` is present in a dozen addin folders, so it would have
+  disabled most of the trimming the SDK exists to do.
+
+  **Result**: all 6 `DebuggerIntegrationTests` pass. And the addin test below was upgraded from
+  "start without debugging" to **real debugging**: it sets a breakpoint in the addin's own
+  `RegisterStrideProjectTreeContributorCommand.Run`, starts the addin project under the debugger,
+  and asserts it stops there. That empirically confirms the one capability the whole F5-addin story
+  depends on - **a breakpoint set before launch, in a module the debuggee has not loaded yet and
+  which lives outside the debuggee's own directory, binds when that module arrives**
+  (`ManagedDebugger_EventHandlers` calling `TryBindPendingBreakpoints()`), which until now had only
+  been confirmed by reading SharpDbg's source.
+
+  Worth remembering for next time: a silent adapter exit surfaces in the IDE as a confusing
+  disposed-object error from the client. `--engineLogging=<path>` on `SharpDbg.Cli` is the way to
+  see what actually happened.
+
+- **2026-08-27 (this note moved here; DevFlow unified; addin projects are now startable)** —
+  Three follow-ups to the relocation, all verified.
+
+  **1. DevFlow versions unified.** Every `LeXtudio.DevFlow.Agent.*` `PackageReference` in
+  OpenDevelop was on `0.2.2` while the host itself was on `0.2.3-local2`, so `NU1605`
+  package-downgrade errors (warnings-as-errors) failed ~7 addins and made
+  `OpenDevelop.Mvp.slnx` unbuildable. All 15 references are now `0.2.3-local2`. The solution now
+  builds except for one genuinely pre-existing macOS incompatibility (`CodeQuality`'s
+  `MatrixControl.cs` calls `Bitmap.GetHbitmap`, which does not exist off Windows) - unrelated to
+  any of this work.
+
+  **2. Addin projects are startable (F5 launches a second OpenDevelop with the addin loaded).**
+  This is what makes an out-of-repo addin developable at all, and therefore what makes the move
+  above sustainable. Almost all of it turned out to be reuse rather than new machinery:
+  - `-addindir:<dir>` already existed in `SharpDevelopMain.cs` ("allows testing addins without
+    having to install them"); the trailing-quote hack in `SplashScreen.cs` is a fossil of the old
+    SharpDevelop AddIn template driving it through `StartArguments`.
+  - `StartAction`/`StartProgram`/`StartArguments`/`StartWorkingDirectory` are plain MSBuild
+    properties read by `DotNetStartBehavior` via `GetEvaluatedProperty`, and with
+    `StartAction=Program` its `IsStartable` checks only that `StartProgram` is non-empty - it never
+    looks at `OutputType`. So a class library becomes startable with **no project-system change**;
+    `OpenDevelop.Addin.Sdk`'s `Sdk.targets` just emits those four properties.
+  - New in the host: `-configdir:<path>` (sets `ConfigDirectory`, points `DomPersistencePath`
+    inside it, and turns off `AllowUserAddIns`, so the experimental instance never touches the
+    developer's real settings/layout/recent files) and `-devflow:off` (the child cannot bind the
+    parent's agent port; `App.xaml.cs` reads the raw command line because `StartArguments` is the
+    only channel a launcher controls - the debug path builds its own `ProcessStartInfo` and drops
+    the caller's `Environment` dictionary entirely).
+  - Also new: `SharpDevelopMain` now skips an `-addindir:` directory already covered by the host's
+    own recursive `AddIns` scan. Without this, an addin whose `OutputPath` is inside `AddIns/` -
+    which is exactly this addin's case - registers twice, and `AddInTree.Load` responds to a
+    duplicate identity with a modal error and by **disabling** the addin.
+
+  Gotcha worth keeping: the host apphost is named **`OpenDevelop`**, not `SharpDevelop`
+  (`SharpDevelop.csproj` sets `<AssemblyName>OpenDevelop</AssemblyName>`). The first `StartProgram`
+  default pointed at `SharpDevelop` and the launch failed with a bare "No such file or directory".
+
+  **3. Test coverage.** `StrideGameStudioIntegrationTests` now has two facts, both passing:
+  - `StrideGame_OpenEditInspectRun` - the Stride SDK path (open/edit/inspect, launcher generation,
+    live game launch), unchanged apart from skip guards.
+  - `StrideAddInProject_IsStartable_AndLaunchesASecondInstanceThatLoadsTheAddIn` - the Addin SDK
+    path: opens the **addin** project from this repo, asserts the SDK-emitted start configuration
+    (`StartAction=Program`, an existing `StartProgram`, and `-addindir:`/`-configdir:`/`-devflow:off`
+    in `StartArguments`), launches it, and then proves the child actually worked by reading its
+    captured console output - the addin loaded, no duplicate-identity conflict, and the isolated
+    config directory exists on disk. `od.run-project` gained stdout/stderr capture plus a new
+    `od.run-output` action for this, since the child runs with its DevFlow agent off and cannot be
+    asked directly.
+
+  It uses `od.run-project` (Start Without Debugging) rather than `od.debug.start` **because the DAP
+  debugger is currently broken on this machine** - `DebuggerIntegrationTests.BreakpointHit_...`
+  fails identically (`started:false`, `ObjectDisposedException` on a `SemaphoreSlim` in
+  `DapClient.SendRequestAsync`) with none of this work applied. Breakpoint debugging of an addin
+  should work once that is fixed: SharpDbg does rebind pending breakpoints on module load
+  (`ManagedDebugger_EventHandlers.cs` calls `TryBindPendingBreakpoints()` for every module with
+  symbols), which is the one capability the scenario depends on.
+
 - **2026-08-26 (the addin moved OUT of OpenDevelop, into the Stride repo)** — Everyday OpenDevelop
   development no longer involves Stride at all. The addin now lives at
   **`<stride>/sources/tools/Stride.OpenDevelop.AddIn/`**, mirroring

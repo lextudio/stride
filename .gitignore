@@ -180,3 +180,7 @@ project.lock.json
 # Auto-generated version overlay (Stride.WorktreeVersion.targets / Stride.GitVersion.targets)
 /sources/shared/SharedAssemblyInfo.Generated.cs
 
+
+# Experimental-instance profile written when an addin project is started from OpenDevelop
+# (OpenDevelop.Addin.Sdk's StartArguments -configdir:).
+.od-experimental-instance/
