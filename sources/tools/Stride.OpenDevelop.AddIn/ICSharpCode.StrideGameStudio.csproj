@@ -9,9 +9,16 @@
          off this one property - the compile-time references, the addin deployment folder, and the
          host bin folder that bare-name native loaders probe. -->
     <OpenDevelopRoot Condition="'$(OpenDevelopRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../../UnoDevelop/externals/OpenDevelop/'))</OpenDevelopRoot>
+    <!-- A released OpenDevelop can be selected without copying this addin into it. The Addin SDK
+         then starts that installed host with -addindir:$(OutputPath), which is also how the
+         integration suite exercises the real external-addin debug loop. -->
+    <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == '' And '$(OPENDEVELOP_APP_PATH)' != ''">$([System.IO.Path]::GetDirectoryName('$(OPENDEVELOP_APP_PATH)'))/</OpenDevelopHostBin>
     <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == ''">$(OpenDevelopRoot)src/Main/SharpDevelop/bin/$(Configuration)/net10.0-windows/</OpenDevelopHostBin>
     <OpenDevelopAddin>true</OpenDevelopAddin>
     <OpenDevelopAddinKind>InProcess</OpenDevelopAddinKind>
+    <!-- Test-only: exposes the SDK-started child on a second DevFlow port. An ordinary developer
+         launch leaves this empty and therefore retains the SDK default -devflow:off. -->
+    <OpenDevelopDebugDevFlowPort Condition="'$(OpenDevelopDebugDevFlowPort)' == ''">$(OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT)</OpenDevelopDebugDevFlowPort>
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>ICSharpCode.StrideGameStudio</RootNamespace>
     <AssemblyName>ICSharpCode.StrideGameStudio</AssemblyName>
