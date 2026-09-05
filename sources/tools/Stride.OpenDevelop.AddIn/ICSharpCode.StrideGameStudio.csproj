@@ -18,7 +18,9 @@
     <OpenDevelopAddinKind>InProcess</OpenDevelopAddinKind>
     <!-- Test-only: exposes the SDK-started child on a second DevFlow port. An ordinary developer
          launch leaves this empty and therefore retains the SDK default -devflow:off. -->
-    <OpenDevelopDebugDevFlowPort Condition="'$(OpenDevelopDebugDevFlowPort)' == ''">$(OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT)</OpenDevelopDebugDevFlowPort>
+    <OpenDevelopDebugDevFlowPort Condition="'$(OpenDevelopDebugDevFlowPort)' == '' And '$(OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT)' != ''">$(OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT)</OpenDevelopDebugDevFlowPort>
+    <!-- OpenDevelopAppFixture supplies OD_TEST_MODE only to the integration-test parent host. -->
+    <OpenDevelopDebugDevFlowPort Condition="'$(OpenDevelopDebugDevFlowPort)' == '' And '$(OD_TEST_MODE)' == '1'">9300</OpenDevelopDebugDevFlowPort>
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>ICSharpCode.StrideGameStudio</RootNamespace>
     <AssemblyName>ICSharpCode.StrideGameStudio</AssemblyName>

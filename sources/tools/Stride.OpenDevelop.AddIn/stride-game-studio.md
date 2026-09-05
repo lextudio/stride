@@ -1340,6 +1340,19 @@ Known/expected friction to resolve when running for real (measured 2026-08-26, t
   (`ManagedDebugger_EventHandlers.cs` calls `TryBindPendingBreakpoints()` for every module with
   symbols), which is the one capability the scenario depends on.
 
+  **Current installed-app invocation.** The shared `OpenDevelopAppFixture` selects
+  `/Applications/OpenDevelop.app` and forwards that resolved binary path to the parent OpenDevelop
+  process. Consequently the test can be run without shell environment setup:
+
+  ```bash
+  dotnet run --project sources/tools/Stride.OpenDevelop.AddIn.Tests/Stride.OpenDevelop.AddIn.Tests.csproj \
+    -- -method OpenDevelop.IntegrationTests.StrideGameStudioIntegrationTests.StrideAddInProject_IsStartable_AndDebuggingBreaksInsideTheAddIn -parallel none
+  ```
+
+  In that test-only parent process the addin uses isolated DevFlow port `9300`; normal F5 remains
+  `-devflow:off`. `OPENDEVELOP_APP_PATH` and `OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT` are optional
+  overrides for another installed application or port.
+
 - **2026-08-26 (the addin moved OUT of OpenDevelop, into the Stride repo)** — Everyday OpenDevelop
   development no longer involves Stride at all. The addin now lives at
   **`<stride>/sources/tools/Stride.OpenDevelop.AddIn/`**, mirroring

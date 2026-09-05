@@ -650,7 +650,7 @@ public sealed class StrideGameStudioIntegrationTests : IAsyncDisposable
 		Assert.Contains("-configdir:", startArguments);
 		var expectedDevFlowArgument = Environment.GetEnvironmentVariable("OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT") is { Length: > 0 } port
 			? "-devflow:" + port
-			: "-devflow:off";
+			: "-devflow:" + AddinDevFlowPort;
 		Assert.Contains(expectedDevFlowArgument, startArguments);
 		var configDir = ExtractQuotedArgument(startArguments, "-configdir:");
 		Assert.False(string.IsNullOrEmpty(configDir), "No -configdir: value: the child would share the developer's profile.");
