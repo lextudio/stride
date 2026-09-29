@@ -100,7 +100,7 @@ namespace ICSharpCode.StrideGameStudio
 					return;
 				}
 
-				var session = await StrideEditorHost.OpenSessionAsync(sdpkgPath);
+				var session = await StrideEditorHost.OpenSessionAsync(sdpkgPath, dispatcher);
 				var scene = session.AllAssets.OfType<SceneViewModel>().FirstOrDefault(a =>
 					a.AssetItem != null
 					&& Path.GetFullPath(a.AssetItem.FullPath).Equals(Path.GetFullPath(scenePath), StringComparison.OrdinalIgnoreCase));

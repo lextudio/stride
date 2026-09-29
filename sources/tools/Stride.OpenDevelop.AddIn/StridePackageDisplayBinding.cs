@@ -121,7 +121,7 @@ namespace ICSharpCode.StrideGameStudio
 	{
 		try
 		{
-			var session = await StrideEditorHost.OpenSessionAsync(path);
+			var session = await StrideEditorHost.OpenSessionAsync(path, dispatcher);
 			var summary = Describe(session, path);
 			var sceneAsset = FindFirstScene(session);
 			var entities = SceneAssetReader.ReadFirstScene(session);

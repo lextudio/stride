@@ -1131,6 +1131,8 @@ public sealed partial class Package : IFileSynchronizable, IAssetFinder
         catch (Exception ex)
         {
             log.Error($"Unexpected error while loading assembly reference [{assemblyPath}]", ex);
+            GlobalLogger.GetLogger("Stride.Core.Assets")
+                .Error($"Unexpected error while loading assembly reference [{assemblyPath}]", ex);
         }
 
         // Reuse assemblies from the default load context or still live in this container. Container loads

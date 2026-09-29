@@ -99,7 +99,7 @@ namespace ICSharpCode.StrideGameStudio
 					return;
 				}
 
-				var session = await StrideEditorHost.OpenSessionAsync(sdpkgPath);
+				var session = await StrideEditorHost.OpenSessionAsync(sdpkgPath, dispatcher);
 				var prefab = session.AllAssets.OfType<PrefabViewModel>().FirstOrDefault(a =>
 					a.AssetItem != null
 					&& Path.GetFullPath(a.AssetItem.FullPath).Equals(Path.GetFullPath(prefabPath), StringComparison.OrdinalIgnoreCase));

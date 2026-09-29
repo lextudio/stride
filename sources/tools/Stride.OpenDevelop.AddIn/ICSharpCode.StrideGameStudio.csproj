@@ -8,6 +8,10 @@
     <!-- Override point: where the OpenDevelop checkout lives. Everything OpenDevelop-side hangs
          off this one property - the compile-time references, the addin deployment folder, and the
          host bin folder that bare-name native loaders probe. -->
+    <!-- The OPENDEVELOP_ROOT environment variable reaches evaluations this project cannot pass a
+         -p: to, such as the hosting OpenDevelop reading StartArguments; without it the integration
+         suite's parent host resolved no Addin SDK and saw empty StartArguments. -->
+    <OpenDevelopRoot Condition="'$(OpenDevelopRoot)' == '' And '$(OPENDEVELOP_ROOT)' != ''">$([MSBuild]::EnsureTrailingSlash('$(OPENDEVELOP_ROOT)'))</OpenDevelopRoot>
     <OpenDevelopRoot Condition="'$(OpenDevelopRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../../UnoDevelop/externals/OpenDevelop/'))</OpenDevelopRoot>
     <!-- A released OpenDevelop can be selected without copying this addin into it. The Addin SDK
          then starts that installed host with -addindir:$(OutputPath), which is also how the
@@ -173,7 +177,7 @@
          the assembly/type name used throughout this project's own code. -->
     <PackageReference Include="Silk.NET.SDL" />
     <PackageReference Include="Silk.NET.Windowing.Common" VersionOverride="2.23.0" />
-    <PackageReference Include="LibreWPF.ProGPU" VersionOverride="0.1.0-preview.45" />
+    <PackageReference Include="LibreWPF.ProGPU" VersionOverride="0.1.0-preview.57" />
   </ItemGroup>
   <!-- Real-content integration (doc/technotes/stride-game-studio.md "Real-content integration
        plan"): SessionViewModel/EditorViewModel/AssetsPlugin/PluginService/StrideEditorPlugin, all
@@ -249,6 +253,33 @@
          the copy is no longer needed. Verified live (2026-08-27): both files removed from
          OpenDevelop's bin, scene editor still starts clean, camera still moves under a real
          right-drag + keydown:w. -->
+  </Target>
+  <!-- Silk.NET.SDL does not use P/Invoke: it has its own name-based loader, and on macOS that
+       tries exactly one name, "libSDL2-2.0.dylib" (SDLLibraryNameContainer.MacOS). dlopen of a
+       leaf name only searches dyld's paths and does NOT match an image already loaded under a
+       different name - StrideEditorHost's preloading by absolute path therefore does not make
+       SDL's own load succeed (measured: the absolute load returns a handle, the immediately
+       following leaf load still fails with "no such file"), so Sdl.GetApi() throws and the scene
+       viewport never starts. libvulkan.1.dylib escapes this only because its install name already
+       IS the bare leaf name. Giving SDL the same shape is what makes the preloading work: once
+       the image's install name is "libSDL2-2.0.dylib", dyld matches Silk's leaf request against
+       the already-loaded image instead of going to disk. Nothing links against SDL (the .NET side
+       only ever loads it dynamically), so rewriting the id breaks no dependent. -->
+  <Target Name="NormalizeSdlInstallName" AfterTargets="CopyStrideRuntimes" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <ItemGroup>
+      <_SdlDylibForInstallName Include="$(OutputPath)libSDL2-2.0.dylib" />
+    </ItemGroup>
+    <Exec Command="install_name_tool -id libSDL2-2.0.dylib &quot;@(_SdlDylibForInstallName)&quot;"
+          Condition="Exists('@(_SdlDylibForInstallName)')"
+          StandardOutputImportance="low" />
+    <!-- Rewriting a Mach-O load command invalidates its signature, and on Apple Silicon an
+         invalidly-signed dylib is not merely refused: dyld kills the whole process with
+         SIGKILL / CODESIGNING "Invalid Page" the first time it is mapped. So the rewrite has to
+         be followed by a fresh ad-hoc signature (an identity-based one is only needed if this
+         output is ever redistributed outside the developer's own machine). -->
+    <Exec Command="codesign --force --sign - &quot;@(_SdlDylibForInstallName)&quot;"
+          Condition="Exists('@(_SdlDylibForInstallName)')"
+          StandardOutputImportance="low" />
   </Target>
   <!-- Wholesale copy of Stride.GameStudio's own bin output: this is a plain net10.0-windows IL
        folder (AppendRuntimeIdentifierToOutputPath=false), so copying it next to this addin's own

@@ -455,6 +455,23 @@ namespace Stride.Core.Assets.Editor.ViewModel
             return sessionViewModel;
         }
 
+        /// <summary>
+        /// Whether a session load may rebuild the package's own project references through
+        /// MSBuild, in the editor process, when their output assembly is missing.
+        /// <para>
+        /// Upstream always does this, and in Game Studio that is right: Game Studio owns the
+        /// projects and its process has the engine's build tasks. It is wrong for an editor that
+        /// merely HOSTS these projects as someone else's build system. This fork's OpenDevelop
+        /// addin is that case: OpenDevelop evaluates and builds the Stride projects itself, while
+        /// the Stride build tasks (StrideWriteAssetBuildManifest, the TFM-resolution task) are not
+        /// on the host's MSBuild task path - so the in-process rebuild fails, the package's own
+        /// assembly is never loaded, and every script component in the scene degrades to an
+        /// IUnloadable placeholder. Turning this off makes the load use each project's existing
+        /// TargetPath instead. Defaults to true, so standalone Game Studio is unchanged.
+        /// </para>
+        /// </summary>
+        public static bool AllowAutoCompileProjects { get; set; } = true;
+
         private static PackageLoadParameters CreatePackageLoadParameters(WorkProgressViewModel workProgress, CancellationTokenSource cancellationSource)
         {
             // Snapshot every file the upgrade overwrites into a timestamped backup folder under the solution.
@@ -464,6 +481,7 @@ namespace Stride.Core.Assets.Editor.ViewModel
             {
                 CancelToken = cancellationSource.Token,
                 BackupBeforeUpgrade = true,
+                AutoCompileProjects = AllowAutoCompileProjects,
             };
             loadParameters.PackageUpgradeRequested = (package, pendingUpgrades) =>
             {

@@ -95,10 +95,13 @@ namespace ICSharpCode.StrideGameStudio
 			// "Failed to open Stride session" with no detail.
 			GlobalLogger.GlobalMessageLogged += message =>
 			{
+				var text = message.ToString();
+				if (message is Stride.Core.Diagnostics.LogMessage concrete && concrete.Exception != null)
+					text += " | " + concrete.Exception;
 				if (message.IsError())
-					ICSharpCode.Core.LoggingService.Error("[Stride] " + message);
+					ICSharpCode.Core.LoggingService.Error("[Stride] " + text);
 				else if (message.Type == LogMessageType.Warning)
-					ICSharpCode.Core.LoggingService.Warn("[Stride] " + message);
+					ICSharpCode.Core.LoggingService.Warn("[Stride] " + text);
 			};
 
 			// Stride does substantial work on threads it owns (asset build, shader compilation). An
@@ -225,11 +228,11 @@ namespace ICSharpCode.StrideGameStudio
 		/// already open - Stride's SessionViewModel is a process-wide singleton, matching real
 		/// GameStudio's one-project-at-a-time model.
 		/// </summary>
-		public static async Task<SessionViewModel> OpenSessionAsync(string sdpkgPath)
+		public static async Task<SessionViewModel> OpenSessionAsync(string sdpkgPath, System.Windows.Threading.Dispatcher uiDispatcher = null)
 		{
 			lock (gate)
 			{
-				EnsurePluginsRegistered();
+				EnsurePluginsRegistered(uiDispatcher);
 				if (editor == null)
 					RebuildEditor();
 
@@ -256,11 +259,15 @@ namespace ICSharpCode.StrideGameStudio
 				// creates and registers GameSettingsProviderService and GameStudioBuilderService, both
 				// of which EditorGameController's constructor resolves (without them, opening a scene
 				// fails with "No service matches the given type").
-				foreach (var plugin in editor.Session.ServiceProvider.Get<IAssetsPluginService>().Plugins)
-					plugin.InitializeSession(editor.Session);
+				var session = editor.Session;
+				await dispatcher.InvokeAsync(() =>
+				{
+					foreach (var plugin in session.ServiceProvider.Get<IAssetsPluginService>().Plugins)
+						plugin.InitializeSession(session);
+				});
 
 				openSessionPath = sdpkgPath;
-				return editor.Session;
+				return session;
 			}
 			catch
 			{
@@ -285,7 +292,7 @@ namespace ICSharpCode.StrideGameStudio
 		/// throws "already registered" on a second call, so this must never re-run - unlike
 		/// RebuildEditor, which is safe (and, after a failed open, necessary) to repeat.
 		/// </summary>
-		static void EnsurePluginsRegistered()
+		static void EnsurePluginsRegistered(System.Windows.Threading.Dispatcher uiDispatcher)
 		{
 			if (pluginsRegistered)
 				return;
@@ -298,6 +305,13 @@ namespace ICSharpCode.StrideGameStudio
 			// dependencies resolve to nothing, and loading a scene then dies on a missing base asset
 			// (e.g. DefaultGraphicsCompositorLevelN, which lives in Stride.Engine's asset package).
 			PackageSessionPublicHelper.FindAndSetMSBuildVersion();
+
+			// OpenDevelop is the build system for these projects, not this process: the Stride build
+			// tasks are not on the host's MSBuild task path, so letting the session rebuild the game
+			// or Pack projects in-process fails ("StrideWriteAssetBuildManifest task not found"),
+			// the package's own assembly never gets loaded, and every script component in the scene
+			// silently degrades to an IUnloadable placeholder. Use the projects' existing outputs.
+			Stride.Core.Assets.Editor.ViewModel.SessionViewModel.AllowAutoCompileProjects = false;
 
 			// Reused as-is: same registration sequence as Stride.GameStudio's own Program.cs.
 			// StrideEditorPlugin was `internal` in upstream Stride - flipped to `public` in this
@@ -312,7 +326,7 @@ namespace ICSharpCode.StrideGameStudio
 			// Game.PrepareContext and the unhandled exception takes the whole host process down.
 			strideEditorPlugin.EnablePreviewService = false;
 
-			dispatcher = DispatcherService.Create();
+			dispatcher = uiDispatcher != null ? new DispatcherService(uiDispatcher) : DispatcherService.Create();
 			dialogService = new AddinDialogService();
 			pluginService = new PluginService();
 
