@@ -12,7 +12,7 @@
     // library that has to run inside OpenDevelop on macOS, so it builds against LibreWPF's
     // WPF-on-macOS SDK rather than Microsoft.NET.Sdk + UseWPF. Keep the version in lock-step with
     // OpenDevelop's own global.json - the addin is loaded into that process.
-    "LibreWPF.Sdk": "0.1.0-preview.57"
+    "LibreWPF.Sdk": "0.1.0-preview.65"
     // Uncomment if switching back to Sdk="Stride.Build.Sdk" project style (add a comma above first).
     // "Stride.Build.Sdk": "4.3.0-dev",
     // "Stride.Build.Sdk.Editor": "4.3.0-dev",
