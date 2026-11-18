@@ -7,6 +7,7 @@
 // pattern for LibreWPF. The Windows variant lives in EmbeddedGameForm.cs behind
 // STRIDE_EDITOR_WINFORMS.
 
+#if !STRIDE_EDITOR_WINFORMS
 using System;
 using System.Windows;
 using Stride.Core.Presentation.Controls;
@@ -42,3 +43,4 @@ namespace Stride.Editor.Engine
         public void Dispose() { }
     }
 }
+#endif
