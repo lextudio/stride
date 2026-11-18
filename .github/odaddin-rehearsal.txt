@@ -6,3 +6,5 @@ Rehearsals so far:
 2. Second run: restore and SDK 11 selection fine; Stride.Editor failed with CS0101 (EmbeddedGameForm defined by both the WinForms and the
    headless variant on a Windows host).
 3. This run: with the headless twin guarded by !STRIDE_EDITOR_WINFORMS.
+4. Third run: the CS0101 was gone; Stride.Editor's Windows variant (EmbeddedGameForm.cs) failed with CS1061 because the fork typed Host as
+   IEmbeddedGameHostView, which has no ForwardMessage. Now it calls it through GameEngineHost, the Windows host.

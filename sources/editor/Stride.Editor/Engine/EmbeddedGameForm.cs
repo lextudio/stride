@@ -45,7 +45,8 @@ namespace Stride.Editor.Engine
                     case NativeHelper.WM_LBUTTONUP:
                     case NativeHelper.WM_MOUSEMOVE:
                     case NativeHelper.WM_CONTEXTMENU:
-                        Host.ForwardMessage(m.HWnd, m.Msg, m.WParam, m.LParam);
+                        // Host is the headless-capable interface in this fork; only the Windows host (GameEngineHost) owns a window to forward to.
+                        (Host as GameEngineHost)?.ForwardMessage(m.HWnd, m.Msg, m.WParam, m.LParam);
                         break;
                 }
             }
