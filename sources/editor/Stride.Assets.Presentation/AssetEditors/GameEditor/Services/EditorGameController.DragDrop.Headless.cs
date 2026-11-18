@@ -6,6 +6,7 @@
 // presentation lands with the frame-presenter input slice (WPF-routed drops forwarded to
 // the game thread) - see doc/technotes/stride-game-studio.md.
 
+#if !STRIDE_EDITOR_WINFORMS
 using System;
 using System.Runtime.CompilerServices;
 
@@ -41,3 +42,4 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         // are simply omitted (all call sites no-op) on non-Windows hosts.
     }
 }
+#endif

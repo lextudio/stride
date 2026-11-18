@@ -8,3 +8,6 @@ Rehearsals so far:
 3. This run: with the headless twin guarded by !STRIDE_EDITOR_WINFORMS.
 4. Third run: the CS0101 was gone; Stride.Editor's Windows variant (EmbeddedGameForm.cs) failed with CS1061 because the fork typed Host as
    IEmbeddedGameHostView, which has no ForwardMessage. Now it calls it through GameEngineHost, the Windows host.
+5. Fourth run: Stride.Editor compiled on Windows; Stride.Assets.Presentation failed with CS0111 (EditorGameController.DragDrop.Headless.cs
+   defines DisableDrop/DoDragDrop/EnableDrop that the Windows twin also defines). It was the second and last *.Headless.cs file in the
+   tree without the !STRIDE_EDITOR_WINFORMS guard.
