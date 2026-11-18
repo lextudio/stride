@@ -1,0 +1,199 @@
+name: Release the OpenDevelop add-in
+
+# Pushing a tag vMAJOR.MINOR.PATCH[-suffix] builds the Stride Game Studio add-in for OpenDevelop as
+# ICSharpCode.StrideGameStudio.odaddin and publishes it as the one asset of a GitHub release of this repository. OpenDevelop users
+# who trust this repository (Tools > Options > AddIns > Trusted repositories) then see it in the AddIn Manager.
+# See OpenDevelop's doc/technotes/addin-github-releases.md for the format and the rules this follows.
+#
+# The add-in is compiled against an unpacked OpenDevelop release (its assemblies and its Addin SDK), not against OpenDevelop's source.
+# The LibreWPF packages it needs come from LeXtudio's GitHub Packages, with this job's token, as in OpenDevelop's own CI.
+#
+# A push to librewpf-port that touches this workflow or the add-in is a rehearsal: it builds and checks the package and uploads it as a
+# run artifact, but releases nothing. So is a manual run.
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+    branches: [librewpf-port]
+    paths:
+      - '.github/workflows/release-odaddin.yml'
+      - 'sources/tools/Stride.OpenDevelop.AddIn/**'
+  workflow_dispatch:
+    inputs:
+      opendevelop_tag:
+        description: 'OpenDevelop release to build against'
+        default: 'v5.9.1'
+
+permissions:
+  contents: write
+  # LibreWPF, ProGPU and friends are restored from LeXtudio's GitHub Packages.
+  packages: read
+
+concurrency:
+  group: release-odaddin-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  OPENDEVELOP_REPOSITORY: lextudio/OpenDevelop
+  # The release the add-in is built against; the SharpDevelop dependency range in the manifest (5.9) must cover its version.
+  OPENDEVELOP_TAG: ${{ inputs.opendevelop_tag || vars.OPENDEVELOP_TAG || 'v5.9.1' }}
+  # NuGet reads this conventional variable without writing the ephemeral token into any config file (see nuget.config: lextudio_github).
+  NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
+
+jobs:
+  package:
+    name: Package ICSharpCode.StrideGameStudio.odaddin
+    # The runner Stride's own workflows use for the runtime and editor builds.
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 150
+    steps:
+      # Bootstrap .github so the local composite action below is resolvable pre-checkout.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+      - uses: ./.github/actions/stride-checkout
+        with:
+          ref: ${{ github.ref }}
+          exclude: samples
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          # The Stride projects are pinned to the 10.0 SDK by global.json; the add-in targets net11 (the OpenDevelop host's runtime) and
+          # is built with the 11.0 SDK. Both have to be present.
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          } else {
+            # A rehearsal builds whatever version the manifest carries.
+            [xml]$manifest = Get-Content sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.addin
+            $version = $manifest.AddIn.Manifest.Identity.version
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "'$version' is not MAJOR.MINOR.PATCH[-suffix]" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "Building $version against OpenDevelop $env:OPENDEVELOP_TAG"
+
+      - name: Download the OpenDevelop release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'opendevelop'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          gh release download $env:OPENDEVELOP_TAG --repo $env:OPENDEVELOP_REPOSITORY --pattern 'OpenDevelop-win.7z' --dir $root
+          if ($LASTEXITCODE -ne 0) { throw "could not download OpenDevelop-win.7z of $env:OPENDEVELOP_TAG" }
+          7z x (Join-Path $root 'OpenDevelop-win.7z') "-o$root" -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw '7z could not extract the OpenDevelop release' }
+          # The archive's top folder name is not part of any contract: find the folder that holds the host.
+          $marker = Get-ChildItem $root -Recurse -Depth 2 -Filter 'ICSharpCode.SharpDevelop.dll' | Select-Object -First 1
+          if (-not $marker) { throw "ICSharpCode.SharpDevelop.dll is not in the OpenDevelop release $env:OPENDEVELOP_TAG" }
+          $host_ = $marker.DirectoryName
+          foreach ($required in 'Sdks/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets', 'SdkResolvers/OpenDevelop.Addin.SdkResolver/OpenDevelop.Addin.SdkResolver.dll', 'ICSharpCode.Designer.Remote.dll', 'LeXtudio.DevFlow.Agent.Core.dll') {
+            if (-not (Test-Path (Join-Path $host_ $required))) { throw "$env:OPENDEVELOP_TAG does not contain $required" }
+          }
+          "OPENDEVELOP_HOST=$host_/" >> $env:GITHUB_ENV
+          "MSBUILDADDITIONALSDKRESOLVERSFOLDER=$host_/SdkResolvers" >> $env:GITHUB_ENV
+
+      - name: Build and pack ICSharpCode.StrideGameStudio.odaddin
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'odaddin-output'
+          $pkg = Join-Path $env:RUNNER_TEMP 'odaddin-package'
+          New-Item -ItemType Directory -Force $out, $pkg | Out-Null
+          # The SDK is chosen by the working directory's global.json, the MSBuild SDKs (LibreWPF.Sdk) by the project's: build from a
+          # folder that pins the 11.0 SDK and keeps Stride's own global.json for the latter.
+          $work = Join-Path $env:RUNNER_TEMP 'sdk11'
+          New-Item -ItemType Directory -Force $work | Out-Null
+          '{ "sdk": { "version": "11.0.100", "rollForward": "latestMinor", "allowPrerelease": true } }' | Set-Content (Join-Path $work 'global.json')
+          Push-Location $work
+          try {
+            dotnet --version
+            dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
+              -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
+              -p:WarningLevel=0 -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
+              -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
+              -p:StrideAddInDeployDir="$out\" `
+              -p:OpenDevelopDistributionBuild=true `
+              -p:OpenDevelopAddinReleaseVersion=${{ steps.version.outputs.version }} `
+              -p:OpenDevelopAddinPackageDir="$pkg\" `
+              -p:ProGpuWpfCopyPackageRuntimeAssets=false
+            if ($LASTEXITCODE -ne 0) { throw "dotnet build exited with $LASTEXITCODE" }
+          } finally { Pop-Location }
+          "PACKAGE=$pkg\ICSharpCode.StrideGameStudio.odaddin" >> $env:GITHUB_ENV
+
+      - name: Check the package
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:PACKAGE)) { throw "no package at $env:PACKAGE" }
+          $size = (Get-Item $env:PACKAGE).Length
+          "package: $([math]::Round($size / 1MB)) MB"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($env:PACKAGE)
+          try {
+            $names = $zip.Entries | ForEach-Object { $_.FullName }
+            $rootAddins = @($names | Where-Object { $_ -match '^[^/]+\.addin$' })
+            if ($rootAddins.Count -ne 1) { throw "the package must have exactly one .addin at its root, found $($rootAddins.Count)" }
+            $reader = New-Object System.IO.StreamReader(($zip.GetEntry($rootAddins[0])).Open())
+            [xml]$addin = $reader.ReadToEnd(); $reader.Dispose()
+            $identityVersion = $addin.AddIn.Manifest.Identity.version
+            if ($identityVersion -ne '${{ steps.version.outputs.version }}') { throw "the manifest's Identity version is '$identityVersion', not ${{ steps.version.outputs.version }}" }
+            # The SharpDevelop dependency states which OpenDevelop versions this build is for: it has to cover the release it was built against.
+            $range = ($addin.AddIn.Manifest.Dependency | Where-Object { $_.addin -eq 'SharpDevelop' }).version
+            if (-not $range) { throw 'the manifest has no SharpDevelop dependency range' }
+            $host_ = $env:OPENDEVELOP_TAG.TrimStart('v') -replace '-.*$', ''
+            # AddInReference semantics: a bound is compared on the components it names (5.9 means 5.9.x).
+            function Test-Bound([string]$actual, [string]$bound, [int]$sign) {
+              $a = $actual.Split('.') | ForEach-Object { [int]$_ }
+              $b = $bound.Split('.') | ForEach-Object { [int]$_ }
+              for ($k = 0; $k -lt $b.Count; $k++) {
+                $x = if ($k -lt $a.Count) { $a[$k] } else { 0 }
+                if ($x -ne $b[$k]) { return (($x - $b[$k]) * $sign) -gt 0 }
+              }
+              return $true
+            }
+            $low, $high = if ($range -match '^([0-9.]+)-([0-9.]+)$') { $Matches[1], $Matches[2] } else { $range, $range }
+            if (-not ((Test-Bound $host_ $low 1) -and (Test-Bound $host_ $high -1))) { throw "the manifest's SharpDevelop range '$range' does not cover OpenDevelop $host_ (the release this was built against)" }
+            # What must not ride along: link-time files and the platforms OpenDevelop does not ship for.
+            $forbidden = @($names | Where-Object { $_ -match '\.(pdb|lib|a)$' -or $_ -match '(^|/)runtimes/(android|ios|iossimulator|tvos|maccatalyst|linux-arm(/|$)|osx-x64|win-x86)' })
+            if ($forbidden.Count -gt 0) { throw "the package carries build-only or foreign files: $($forbidden | Select-Object -First 5)" }
+            foreach ($rid in 'win-x64', 'linux-x64', 'osx-arm64') {
+              if (-not ($names | Where-Object { $_ -like "runtimes/$rid/*" })) { throw "the package has no natives for $rid" }
+            }
+          } finally { $zip.Dispose() }
+          # GitHubReleaseSource refuses a download above 1 GiB.
+          if ($size -gt 1GB) { throw "the package is $size bytes, over the 1 GiB the AddIn Manager accepts" }
+          Copy-Item $env:PACKAGE ICSharpCode.StrideGameStudio.odaddin
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ICSharpCode.StrideGameStudio.odaddin
+          path: ICSharpCode.StrideGameStudio.odaddin
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $flags = @()
+          if ($env:GITHUB_REF_NAME -like '*-*') { $flags += '--prerelease' }
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # A release was drafted by hand: its one asset is this package.
+            gh release upload $env:GITHUB_REF_NAME ICSharpCode.StrideGameStudio.odaddin --clobber
+          } else {
+            $version = $env:GITHUB_REF_NAME.TrimStart('v')
+            $odTag = $env:OPENDEVELOP_TAG.TrimStart('v')
+            gh release create $env:GITHUB_REF_NAME ICSharpCode.StrideGameStudio.odaddin --title $env:GITHUB_REF_NAME @flags `
+              --notes "Stride Game Studio for OpenDevelop $odTag (add-in version $version). Trust this repository in Tools > Options > AddIns > Trusted repositories, then install it from the AddIn Manager."
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'could not publish the release' }

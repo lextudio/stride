@@ -17,7 +17,7 @@
          then starts that installed host with -addindir:$(OutputPath), which is also how the
          integration suite exercises the real external-addin debug loop. -->
     <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == '' And '$(OPENDEVELOP_APP_PATH)' != ''">$([System.IO.Path]::GetDirectoryName('$(OPENDEVELOP_APP_PATH)'))/</OpenDevelopHostBin>
-    <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == ''">$(OpenDevelopRoot)src/Main/SharpDevelop/bin/$(Configuration)/net10.0-windows/</OpenDevelopHostBin>
+    <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == ''">$(OpenDevelopRoot)src/Main/SharpDevelop/bin/$(Configuration)/net11.0-windows/</OpenDevelopHostBin>
     <!-- The Addin SDK trims this add-in's output by OpenDevelop.host-assemblies.txt (the host's own assembly names). OpenDevelop
          releases up to v5.9.1 do not ship it; use the copy next to this project (taken from v5.9.1) when the host directory has
          none. A host that ships its own list is always preferred. -->
@@ -29,7 +29,13 @@
     <OpenDevelopDebugDevFlowPort Condition="'$(OpenDevelopDebugDevFlowPort)' == '' And '$(OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT)' != ''">$(OPENDEVELOP_ADDIN_TEST_DEVFLOW_PORT)</OpenDevelopDebugDevFlowPort>
     <!-- OpenDevelopAppFixture supplies OD_TEST_MODE only to the integration-test parent host. -->
     <OpenDevelopDebugDevFlowPort Condition="'$(OpenDevelopDebugDevFlowPort)' == '' And '$(OD_TEST_MODE)' == '1'">9300</OpenDevelopDebugDevFlowPort>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net11.0-windows</TargetFramework>
+    <!-- The OpenDevelop host this add-in loads into is net11 (since 5.9), and its assemblies reference System.Runtime 11: the add-in has to
+         target net11 to compile against them. The Stride projects it references stay net10; a net11 project can use those. -->
+    <!-- The published LibreWPF closure ships lib/net10.0 only; LibreWPF.Sdk derives these folders from the TargetFramework, so pin them back (same block as OpenDevelop's Directory.Build.props). -->
+    <_ProGpuWpfManagedTransportRuntimeTfm>net10.0</_ProGpuWpfManagedTransportRuntimeTfm>
+    <_ProGpuWpfCanonicalWinFormsRuntimeTfm>net10.0</_ProGpuWpfCanonicalWinFormsRuntimeTfm>
+    <_ProGpuWpfPortableWinFormsCompatRuntimeTfm>net10.0</_ProGpuWpfPortableWinFormsCompatRuntimeTfm>
     <RootNamespace>ICSharpCode.StrideGameStudio</RootNamespace>
     <AssemblyName>ICSharpCode.StrideGameStudio</AssemblyName>
     <UseWPF>true</UseWPF>
@@ -63,6 +69,10 @@
        still evaluates (and gives a clear reference error) when OpenDevelopRoot is wrong. -->
   <Import Project="$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.props"
           Condition="Exists('$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.props')" />
+  <!-- No OpenDevelop source tree (a release build, CI): the same SDK files are part of every installed OpenDevelop, under Sdks/ next to the
+       host assemblies. -->
+  <Import Project="$(OpenDevelopHostBin)Sdks/OpenDevelop.Addin.Sdk/Sdk/Sdk.props"
+          Condition="!Exists('$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.props') And Exists('$(OpenDevelopHostBin)Sdks/OpenDevelop.Addin.Sdk/Sdk/Sdk.props')" />
   <!-- OpenDevelopTrimAddinOutput (OpenDevelop.Addin.Sdk/Sdk/Sdk.targets) deletes any DLL from this
        addin's output whose filename also exists in the host app's own bin folder, assuming the
        host's copy is a safe substitute. That assumption breaks for NuGet.ProjectModel: the host
@@ -90,8 +100,6 @@
          only $(OpenDevelopHostBin) (a built host OUTPUT) is still needed, and only at runtime
          (addin loading) and for the two host-bin HintPaths still below (DevFlow, and
          OpenDevelopDebugHost in the SDK). -->
-    <PackageReference Include="ICSharpCode.SharpDevelop" VersionOverride="5.2.0"><Private>false</Private></PackageReference>
-    <PackageReference Include="ICSharpCode.Core" VersionOverride="5.2.0"><Private>false</Private></PackageReference>
     <!-- NU1107: OpenDevelop's own Roslyn closure (via ICSharpCode.SharpDevelop ->
          Microsoft.CodeAnalysis.CSharp.Features) needs 5.6.0, while Stride.Assets.Presentation's
          Microsoft.CodeAnalysis.CSharp.Scripting 5.3.0 pins Microsoft.CodeAnalysis.Scripting.Common
@@ -109,10 +117,13 @@
          pinned to the exact build OpenDevelop's host ships (packed to the local feed from
          src/Libraries/AvalonEdit/ICSharpCode.AvalonEdit), makes this the winning version instead
          of an accidental one. -->
-    <PackageReference Include="ICSharpCode.AvalonEdit" VersionOverride="6.3.2" />
     <!-- For the [DevFlowAction] diagnostics in StrideGameStudioDevFlowActions. Private=false: the
          host already loads this assembly (it runs the agent), and a second copy in the addin folder
          would be a different instance of the same attribute types, so discovery would not match. -->
+    <!-- The OpenDevelop host assemblies this add-in compiles against, taken as built from OpenDevelopHostBin (an OpenDevelop
+         release or installation) rather than from locally packed ICSharpCode.* packages, which exist nowhere a CI job could
+         restore them from. Private=false: the host owns these types at run time. -->
+    <Reference Include="$(OpenDevelopHostBin)ICSharpCode.*.dll;$(OpenDevelopHostBin)LeXtudio.OpenDevelop.ResourceFiles.dll;$(OpenDevelopHostBin)Xceed.Wpf.Toolkit.dll" Private="false" />
     <Reference Include="LeXtudio.DevFlow.Agent.Core">
       <HintPath>$(OpenDevelopHostBin)LeXtudio.DevFlow.Agent.Core.dll</HintPath>
       <Private>false</Private>
@@ -185,7 +196,7 @@
          the assembly/type name used throughout this project's own code. -->
     <PackageReference Include="Silk.NET.SDL" />
     <PackageReference Include="Silk.NET.Windowing.Common" VersionOverride="2.23.0" />
-    <PackageReference Include="LibreWPF.ProGPU" VersionOverride="0.1.0-preview.57" />
+    <PackageReference Include="LibreWPF.ProGPU" VersionOverride="0.1.0-preview.69" />
   </ItemGroup>
   <!-- Real-content integration (doc/technotes/stride-game-studio.md "Real-content integration
        plan"): SessionViewModel/EditorViewModel/AssetsPlugin/PluginService/StrideEditorPlugin, all
@@ -222,29 +233,29 @@
   </ItemGroup>
   <Target Name="CopyStrideRuntimes" AfterTargets="Build">
     <ItemGroup>
-      <StrideRt Include="$(StrideRoot)sources\engine\Stride.Engine\bin\Debug\net10.0\runtimes\**\*" />
+      <StrideRt Include="$(StrideRoot)sources\engine\Stride.Engine\bin\$(Configuration)\net10.0\runtimes\**\*" />
       <!-- Stride.GameStudio targets net10.0-windows, so its own NuGet runtime-asset selection
            only pulls Windows-flavored "runtimes/*/native" folders (e.g. libbulletc.dll) even with
            RuntimeIdentifier unset on macOS - the osx-arm64 native asset only shows up in plain
            net10.0 (non-Windows-targeted) projects that consume the same native package, such as
            Stride.Physics's own bin output. Pull those in too so bulletc etc. resolve on macOS. -->
-      <StrideRt Include="$(StrideRoot)sources\engine\Stride.Physics\bin\Debug\net10.0\runtimes\**\*" />
+      <StrideRt Include="$(StrideRoot)sources\engine\Stride.Physics\bin\$(Configuration)\net10.0\runtimes\**\*" />
       <!-- Same TFM issue again for FFmpeg (avutil/avcodec/...) and every other native dep
            Stride.Assets.Presentation itself pulls in - its own (non-Windows-targeted-adjacent,
            but still net10.0-windows) bin folder DOES carry the full osx-arm64 native set though,
            since it builds directly against those NuGet packages. Superset of what's needed here
            (bulletc/freetype/etc. duplicate the sources above; SkipUnchangedFiles makes that free). -->
-      <StrideRt Include="$(StrideRoot)sources\editor\Stride.Assets.Presentation\bin\Debug\net10.0-windows\runtimes\**\*" />
+      <StrideRt Include="$(StrideRoot)sources\editor\Stride.Assets.Presentation\bin\$(Configuration)\net10.0-windows\runtimes\**\*" />
       <!-- ...and Stride.EffectCompilerServer's, which is a further superset: it is the only one
            carrying libstride_spirv_tools. Without it SpirvTools' static ctor throws on first shader
            compilation, EditorServiceGame catches that into Faulted, and from then on Update returns
            immediately - so every GameSystem stops (scene stays on screen, frame counter keeps
            climbing, no editor service ever runs again). -->
-      <StrideRt Include="$(StrideRoot)sources\tools\Stride.EffectCompilerServer\bin\Debug\net10.0-windows\runtimes\**\*" />
+      <StrideRt Include="$(StrideRoot)sources\tools\Stride.EffectCompilerServer\bin\$(Configuration)\net10.0-windows\runtimes\**\*" />
       <!-- Native SDL2 isn't part of Stride's own runtimes output (it's a separate NuGet
            package); GameContextSDL needs it at load time (see stride-game-studio.md's SDL
            probes - Silk.NET.SDL.GetApi() fails without it on the load path). -->
-      <NativeSdl Include="$(HOME)/.nuget/packages/ultz.native.sdl/2.32.10/runtimes/osx/native/libSDL2-2.0.dylib" />
+      <NativeSdl Include="$(NuGetPackageRoot)ultz.native.sdl/2.32.10/runtimes/osx/native/libSDL2-2.0.dylib" Condition="Exists('$(NuGetPackageRoot)ultz.native.sdl/2.32.10/runtimes/osx/native/libSDL2-2.0.dylib')" />
     </ItemGroup>
     <Copy SourceFiles="@(StrideRt)" DestinationFiles="@(StrideRt->'$(OutputPath)runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <!-- NativeLibraryHelper.TryFindLibraryPath's first (and most specific) probe is
@@ -298,7 +309,7 @@
        independently-restored process hit when reusing Stride.GameStudio.dll as a live dependency. -->
   <Target Name="CopyGameStudioEditorClosure" AfterTargets="Build">
     <ItemGroup>
-      <GameStudioFiles Include="$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\**\*" Exclude="$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.GameStudio.exe" />
+      <GameStudioFiles Include="$(StrideRoot)sources\editor\Stride.GameStudio\bin\$(Configuration)\net10.0-windows\**\*" Exclude="$(StrideRoot)sources\editor\Stride.GameStudio\bin\$(Configuration)\net10.0-windows\Stride.GameStudio.exe" />
     </ItemGroup>
     <Copy SourceFiles="@(GameStudioFiles)" DestinationFiles="@(GameStudioFiles->'$(OutputPath)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
@@ -325,4 +336,6 @@
   <ItemGroup><None Include="ICSharpCode.StrideGameStudio.addin" /></ItemGroup>
   <Import Project="$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets"
           Condition="Exists('$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets')" />
+  <Import Project="$(OpenDevelopHostBin)Sdks/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets"
+          Condition="!Exists('$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets') And Exists('$(OpenDevelopHostBin)Sdks/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets')" />
 </Project>
