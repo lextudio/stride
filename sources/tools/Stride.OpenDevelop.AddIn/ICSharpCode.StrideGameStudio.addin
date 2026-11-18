@@ -1,5 +1,10 @@
-<AddIn name="Stride Game Studio integration" author="LeXtudio" description="Hosts the Stride asset/scene editors inside OpenDevelop." addInManagerHidden="preinstalled">
-  <Manifest><Identity name="ICSharpCode.StrideGameStudio" /></Manifest>
+<AddIn name="Stride Game Studio integration" author="LeXtudio" description="Hosts the Stride asset/scene editors inside OpenDevelop.">
+  <Manifest>
+    <!-- The version is the release tag without its "v" (PackOdAddin refuses a package whose manifest and tag disagree);
+         the SharpDevelop dependency states which OpenDevelop versions this build was made for. -->
+    <Identity name="ICSharpCode.StrideGameStudio" version="0.1.0" />
+    <Dependency addin="SharpDevelop" version="5.9" />
+  </Manifest>
   <Runtime>
     <Import assembly="ICSharpCode.StrideGameStudio.dll" />
     <!-- Stride asset core, deployed next to this addin (Private references). Listed so the

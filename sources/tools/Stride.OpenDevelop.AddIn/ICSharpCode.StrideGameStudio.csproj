@@ -18,6 +18,10 @@
          integration suite exercises the real external-addin debug loop. -->
     <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == '' And '$(OPENDEVELOP_APP_PATH)' != ''">$([System.IO.Path]::GetDirectoryName('$(OPENDEVELOP_APP_PATH)'))/</OpenDevelopHostBin>
     <OpenDevelopHostBin Condition="'$(OpenDevelopHostBin)' == ''">$(OpenDevelopRoot)src/Main/SharpDevelop/bin/$(Configuration)/net10.0-windows/</OpenDevelopHostBin>
+    <!-- The Addin SDK trims this add-in's output by OpenDevelop.host-assemblies.txt (the host's own assembly names). OpenDevelop
+         releases up to v5.9.1 do not ship it; use the copy next to this project (taken from v5.9.1) when the host directory has
+         none. A host that ships its own list is always preferred. -->
+    <OpenDevelopHostManifest Condition="'$(OpenDevelopHostManifest)' == '' And '$(OpenDevelopHostBin)' != '' And !Exists('$(OpenDevelopHostBin)OpenDevelop.host-assemblies.txt')">$(MSBuildThisFileDirectory)OpenDevelop.host-assemblies.txt</OpenDevelopHostManifest>
     <OpenDevelopAddin>true</OpenDevelopAddin>
     <OpenDevelopAddinKind>InProcess</OpenDevelopAddinKind>
     <!-- Test-only: exposes the SDK-started child on a second DevFlow port. An ordinary developer
@@ -33,7 +37,11 @@
     <OutputType>Library</OutputType>
     <!-- Deploy straight into the OpenDevelop checkout's AddIns tree, exactly as before the move,
          so a developer's OpenDevelop picks the addin up with no extra step. -->
-    <OutputPath>$(OpenDevelopRoot)AddIns/DisplayBindings/StrideGameStudio/</OutputPath>
+    <!-- StrideAddInDeployDir (an absolute path with a trailing slash) deploys somewhere else, for example to build the .odaddin release
+         package without touching the OpenDevelop checkout. Not OutputPath itself: a global OutputPath would flow into every Stride project
+         this one references and redirect all their outputs too. -->
+    <OutputPath Condition="'$(StrideAddInDeployDir)' != ''">$(StrideAddInDeployDir)</OutputPath>
+    <OutputPath Condition="'$(StrideAddInDeployDir)' == ''">$(OpenDevelopRoot)AddIns/DisplayBindings/StrideGameStudio/</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <!-- Engine-repo conventions this project opts out of, same as Stride.VisualStudio.Package. -->
     <StrideAssemblyProcessor>false</StrideAssemblyProcessor>
@@ -293,6 +301,26 @@
       <GameStudioFiles Include="$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\**\*" Exclude="$(StrideRoot)sources\editor\Stride.GameStudio\bin\Debug\net10.0-windows\Stride.GameStudio.exe" />
     </ItemGroup>
     <Copy SourceFiles="@(GameStudioFiles)" DestinationFiles="@(GameStudioFiles->'$(OutputPath)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <!-- A distribution build (-p:OpenDevelopDistributionBuild=true, the .odaddin release package) keeps what an add-in needs on a
+       desktop machine and drops the rest. The Stride runtime trees carry every platform Stride supports (about 1.3 GB, copied
+       once more under each graphics API folder): only the five desktop RIDs OpenDevelop ships for are kept. Also dropped are
+       link-time files nothing loads (.lib, .a, .pdb) and the LibreWPF/ProGPU natives, which the host itself provides. -->
+  <Target Name="StrideAddInPruneDistributionPayload" AfterTargets="Build" Condition="'$(OpenDevelopDistributionBuild)' == 'true'">
+    <ItemGroup>
+      <_StrideDropRid Include="android-arm64;android-x64;ios;ios-arm64;iossimulator;iossimulator-arm64;maccatalyst-arm64;maccatalyst-x64;tvos;tvossimulator;linux-arm;osx-x64;win-x86;browser-wasm" />
+      <_StrideDropDirectory Include="@(_StrideDropRid->'$(OutputPath)runtimes/%(Identity)')" />
+      <_StrideDropDirectory Include="@(_StrideDropRid->'$(OutputPath)Vulkan/runtimes/%(Identity)')" />
+      <_StrideDropDirectory Include="@(_StrideDropRid->'$(OutputPath)Direct3D11/runtimes/%(Identity)')" />
+      <_StrideDropDirectory Include="@(_StrideDropRid->'$(OutputPath)Direct3D12/runtimes/%(Identity)')" />
+      <_StrideDropDirectory Include="@(_StrideDropRid->'$(OutputPath)OpenGL/runtimes/%(Identity)')" />
+      <_StrideDropDirectory Include="@(_StrideDropRid->'$(OutputPath)OpenGLES/runtimes/%(Identity)')" />
+      <_StrideDropFile Include="$(OutputPath)**/*.pdb;$(OutputPath)**/*.lib;$(OutputPath)**/*.a" />
+      <_StrideDropFile Include="$(OutputPath)**/runtimes/*/native/*progpu*" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_StrideDropDirectory)" />
+    <Delete Files="@(_StrideDropFile)" />
+    <RemoveDir Directories="$(OutputPath)runtimes/win-x64/native/sdk;$(OutputPath)runtimes/win-arm64/native/sdk;$(OutputPath)runtimes/linux-x64/native/sdk;$(OutputPath)runtimes/linux-arm64/native/sdk;$(OutputPath)runtimes/osx-arm64/native/sdk" />
   </Target>
   <ItemGroup><None Include="ICSharpCode.StrideGameStudio.addin" /></ItemGroup>
   <Import Project="$(OpenDevelopRoot)src/SDK/OpenDevelop.Addin.Sdk/Sdk/Sdk.targets"
