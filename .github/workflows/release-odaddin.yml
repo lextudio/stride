@@ -106,6 +106,10 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'odaddin-output'
           $pkg = Join-Path $env:RUNNER_TEMP 'odaddin-package'
           New-Item -ItemType Directory -Force $out, $pkg | Out-Null
+          # nuget.config lists a developer's synchronized copy of the OpenAvalon packages beside this checkout
+          # (../OpenDevelop/artifacts/openavalon-feed). NuGet fails on a local source that does not exist, so give it an empty one: in CI the
+          # packages come from GitHub Packages (lextudio_github).
+          New-Item -ItemType Directory -Force (Join-Path (Split-Path $env:GITHUB_WORKSPACE) 'OpenDevelop/artifacts/openavalon-feed') | Out-Null
           # The SDK is chosen by the working directory's global.json, the MSBuild SDKs (LibreWPF.Sdk) by the project's: build from a
           # folder that pins the 11.0 SDK and keeps Stride's own global.json for the latter.
           $work = Join-Path $env:RUNNER_TEMP 'sdk11'
