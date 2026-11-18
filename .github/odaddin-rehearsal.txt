@@ -1,0 +1,8 @@
+Change this file to start a rehearsal of .github/workflows/release-odaddin.yml (it builds and checks the add-in package and uploads it as a
+run artifact; it publishes nothing) when the change you want to test is outside the paths that workflow watches.
+
+Rehearsals so far:
+1. First Windows run: got through restore from GitHub Packages and failed on the missing OpenAvalon local feed directory.
+2. Second run: restore and SDK 11 selection fine; Stride.Editor failed with CS0101 (EmbeddedGameForm defined by both the WinForms and the
+   headless variant on a Windows host).
+3. This run: with the headless twin guarded by !STRIDE_EDITOR_WINFORMS.

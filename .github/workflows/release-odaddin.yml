@@ -18,6 +18,9 @@ on:
     paths:
       - '.github/workflows/release-odaddin.yml'
       - 'sources/tools/Stride.OpenDevelop.AddIn/**'
+      # The add-in builds from a good part of the engine and editor, so a push that fixes one of those does not start a (long) rehearsal
+      # by itself: change this file in the same push when you want one.
+      - '.github/odaddin-rehearsal.txt'
   workflow_dispatch:
     inputs:
       opendevelop_tag:
