@@ -376,7 +376,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
 #if STRIDE_EDITOR_WINFORMS
             var mousePosition = lastRightClick ? lastClickPosition : Control.MousePosition;
             var localPosition = GameForm.Host.PointFromScreen(new Point(mousePosition.X, mousePosition.Y));
-            var relativePos = new Vector2((float)(localPosition.X / GameForm.Host.ActualWidth), (float)(localPosition.Y / GameForm.Host.ActualHeight));
+            var relativePos = new Vector2((float)(localPosition.X / GameForm.Host.Visual.ActualWidth), (float)(localPosition.Y / GameForm.Host.Visual.ActualHeight));
             return Game.GetPositionInScene(relativePos);
 #else
             // Headless presentation has no global-screen mapping yet (frame presenter slice);

@@ -11,3 +11,5 @@ Rehearsals so far:
 5. Fourth run: Stride.Editor compiled on Windows; Stride.Assets.Presentation failed with CS0111 (EditorGameController.DragDrop.Headless.cs
    defines DisableDrop/DoDragDrop/EnableDrop that the Windows twin also defines). It was the second and last *.Headless.cs file in the
    tree without the !STRIDE_EDITOR_WINFORMS guard.
+6. Fifth run: the drag-drop twin compiled; EditorGameController.cs (Windows branch) failed with CS1061, ActualWidth/ActualHeight are not on
+   IEmbeddedGameHostView. It now reads them from the interface's Visual (the same element on the Windows host).
