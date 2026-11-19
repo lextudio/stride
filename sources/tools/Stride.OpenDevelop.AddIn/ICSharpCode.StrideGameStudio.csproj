@@ -270,7 +270,7 @@
     <ItemGroup>
       <_StrideRtWindows Include="@(StrideRt)" Condition="$([System.String]::new('%(RecursiveDir)').StartsWith('win-'))" />
     </ItemGroup>
-    <Copy Condition="Exists('$(OutputPath)Direct3D11')" SourceFiles="@(_StrideRtWindows)" DestinationFiles="@(_StrideRtWindows->'$(OutputPath)Direct3D11\runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_StrideRtWindows)" DestinationFiles="@(_StrideRtWindows->'$(OutputPath)Direct3D11\runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(NativeSdl)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
     <!-- MoltenVK for the macOS scene viewport is vendored in deps/. Stride.Graphics selects it by the TARGET platform,
          which on a Windows or Linux build host is not macOS, so the runtimes trees above lack it there and a package built
@@ -331,7 +331,7 @@
        root copy is what the add-in loader finds first - so the API of whichever build wrote it would win on every OS (a Vulkan root on Windows made
        the SDL window ask for a Vulkan surface, which a Direct3D machine without Vulkan cannot give). Remove the root copy of every assembly
        that a staged API folder carries, leaving the API-independent assemblies at the root. -->
-  <Target Name="StrideAddInIsolateGraphicsApiAssemblies" AfterTargets="Build" BeforeTargets="PackOdAddin" Condition="'$(OpenDevelopDistributionBuild)' == 'true' And Exists('$(OutputPath)Vulkan') And Exists('$(OutputPath)Direct3D11')">
+  <Target Name="StrideAddInIsolateGraphicsApiAssemblies" AfterTargets="Build" BeforeTargets="PackOdAddin" Condition="'$(OpenDevelopDistributionBuild)' == 'true' And Exists('$(OutputPath)Vulkan\Stride.Graphics.dll') And Exists('$(OutputPath)Direct3D11\Stride.Graphics.dll')">
     <ItemGroup>
       <_ApiAssembly Include="$(OutputPath)Vulkan\*.dll;$(OutputPath)Direct3D11\*.dll;$(OutputPath)Vulkan\*.pdb;$(OutputPath)Direct3D11\*.pdb" />
       <_ApiRootCopy Include="@(_ApiAssembly->'$(OutputPath)%(Filename)%(Extension)')" />
