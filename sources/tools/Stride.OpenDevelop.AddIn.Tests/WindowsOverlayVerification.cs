@@ -143,7 +143,14 @@ internal static class WindowsOverlayVerification
 		var finalFrame = status.GetProperty("frame");
 		var movedRect = new Rectangle((int)finalFrame.GetProperty("x").GetDouble(), (int)finalFrame.GetProperty("y").GetDouble(), (int)finalFrame.GetProperty("w").GetDouble(), (int)finalFrame.GetProperty("h").GetDouble());
 		string shot2 = Path.Combine(shotDirectory, "viewport-after-move-resize.png");
+		// A resize recreates the swap chain and the game redraws at the new size: a slow (GPU-less) machine shows a blank surface for a while.
 		var (distinct2, share2) = CapturePixels(movedRect, shot2);
+		var redrawDeadline = DateTime.UtcNow.AddSeconds(40);
+		while (!(distinct2 >= 100 && share2 < 0.90) && DateTime.UtcNow < redrawDeadline)
+		{
+			await Task.Delay(2000);
+			(distinct2, share2) = CapturePixels(movedRect, shot2);
+		}
 		Assert.True(distinct2 >= 100 && share2 < 0.90,
 			$"After moving and resizing the host window the viewport looks empty or flat: {distinct2} distinct colours, the most common covers {share2:P0}. Screenshot: {shot2}\n{status}\n{ide.Output}");
 	}
