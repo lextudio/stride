@@ -31,6 +31,15 @@ namespace ICSharpCode.StrideGameStudio
 			else hwnd = silk != IntPtr.Zero ? silk : proxy;
 			return hwnd != IntPtr.Zero;
 		}
+		/// <summary>The host window's X11 window id (Linux, X11 or XWayland): the render window LibreWPF created through Silk/GLFW.</summary>
+		public static bool TryGetX11Window(Window window, out IntPtr x11Window)
+		{
+			x11Window = IntPtr.Zero;
+			if (ProGpuWpfDiagnostics.TryGetWindowHost(window, out var host) && host?.SilkWindow?.Native?.X11 is { } x11)
+				x11Window = (IntPtr)(long)x11.Window;
+			return x11Window != IntPtr.Zero;
+		}
+
 		public static bool TryGetCocoaNsWindow(Window window, out IntPtr nsWindow)
 		{
 			nsWindow = IntPtr.Zero;

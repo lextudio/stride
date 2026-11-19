@@ -24,6 +24,9 @@ on:
       opendevelop_tag:
         description: 'OpenDevelop release to install it into'
         default: 'v5.9.1'
+      run_id:
+        description: 'Optional: id of a release-odaddin.yml run whose package artifact is tested instead of the release (to test a change before releasing it); the tag above must be the version in its manifest'
+        default: ''
 
 permissions:
   contents: read
@@ -35,6 +38,7 @@ env:
   OPENDEVELOP_REPOSITORY: lextudio/OpenDevelop
   OPENDEVELOP_TAG: ${{ inputs.opendevelop_tag || 'v5.9.1' }}
   STRIDE_TAG: ${{ inputs.tag || 'v0.1.0' }}
+  STRIDE_RUN_ID: ${{ inputs.run_id || '' }}
 
 jobs:
   test:
@@ -52,7 +56,7 @@ jobs:
           - name: linux-x64
             runner: ubuntu-24.04
             opendevelop_asset: OpenDevelop-linux-x64.tar.xz
-            viewport: '0'
+            viewport: '1'
     steps:
       # The game the test opens, and the test project itself. The files above the test project are listed too: its PackageReference carries no
       # version (sources/Directory.Packages.props), global.json pins the SDK and nuget.config names the package sources. A leading slash anchors a
@@ -94,6 +98,12 @@ jobs:
         if: runner.os == 'Linux'
         run: bash opendevelop-src/.github/ci/install-linux-prerequisites.sh --display
 
+      # The viewport check on Linux: software Vulkan (Mesa's lavapipe, the runner has no GPU) for the game, ImageMagick's import to read the screen,
+      # xdotool to move the pointer and the host window, and libva for FFmpeg (see the native-library check below).
+      - name: Install the Linux viewport check's tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers vulkan-tools xdotool imagemagick libva2 libva-drm2 > /dev/null
+
       - name: Download the add-in release and verify its digest
         shell: pwsh
         env:
@@ -101,6 +111,16 @@ jobs:
         run: |
           $dir = Join-Path $env:RUNNER_TEMP 'release'
           New-Item -ItemType Directory -Force $dir | Out-Null
+          if ($env:STRIDE_RUN_ID) {
+            # An unreleased build: the package artifact of a release-odaddin.yml run (it has no release digest to compare with).
+            gh run download $env:STRIDE_RUN_ID --repo $env:GITHUB_REPOSITORY --name $env:ASSET --dir $dir
+            if ($LASTEXITCODE -ne 0) { throw "could not download the package artifact of run $env:STRIDE_RUN_ID" }
+            $file = (Get-ChildItem $dir -Recurse -Filter $env:ASSET | Select-Object -First 1).FullName
+            if (-not $file) { throw "run $env:STRIDE_RUN_ID has no $env:ASSET artifact" }
+            "testing the package of run $env:STRIDE_RUN_ID, not a release: $((Get-Item $file).Length) bytes, sha256 $((Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant())"
+            "STRIDE_ODADDIN=$file" >> $env:GITHUB_ENV
+            return
+          }
           $release = gh release view $env:STRIDE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft,isPrerelease,assets | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw "no release $env:STRIDE_TAG in $env:GITHUB_REPOSITORY" }
           if ($release.isDraft) { throw "$env:STRIDE_TAG is a draft" }
@@ -197,7 +217,7 @@ jobs:
           mkdir -p ../OpenDevelop/artifacts/openavalon-feed
           cd sources/tools/Stride.OpenDevelop.AddIn.Tests
           run=(dotnet run -c Release "-p:OpenDevelopRoot=$GITHUB_WORKSPACE/opendevelop-src/" -- -class Stride.OpenDevelop.AddIn.Tests.StrideOdaddinInstallTests -parallel none)
-          if [ "$RUNNER_OS" = Linux ]; then run=(xvfb-run -a "${run[@]}"); fi
+          if [ "$RUNNER_OS" = Linux ]; then run=(xvfb-run -a -s "-screen 0 1920x1200x24" "${run[@]}"); fi
           set +e
           "${run[@]}" 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
           status=${PIPESTATUS[0]}

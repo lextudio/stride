@@ -1,9 +1,11 @@
 // Copyright (c) 2026 LeXtudio. MIT-licensed (see repository root LICENSE).
 //
 // The native-window operations StrideSceneEditorViewport performs on the SDL window that renders the scene, behind one seam
-// so the viewport has one code path for both desktop systems that pin a real native window over a WPF element:
+// so the viewport has one code path for the desktop systems that pin a real native window over a WPF element:
 //   macOS   - CocoaOverlayInterop (the SDL NSWindow is an addChildWindow: child of the host NSWindow).
 //   Windows - Win32OverlayInterop (the SDL HWND is a borderless popup OWNED by the host window, kept over the element).
+//   Linux   - LinuxOverlayInterop (X11: the SDL window is a borderless window TRANSIENT for the host window, kept over the element; SDL
+//             itself moves, sizes, shows and hides it, and feeds the game its input natively).
 // On Windows the process cannot use Stride's own WinForms path: System.Windows.Forms is LibreWinForms there, so a game form's
 // Handle is not a real HWND and DXGI refuses a swap chain on it (E_ACCESSDENIED in CreateSwapChainForDesktop). SDL creates a
 // genuine HWND, which is what this path relies on.
@@ -16,21 +18,25 @@ namespace ICSharpCode.StrideGameStudio
 	static class OverlayNative
 	{
 		public static IntPtr GetNativeWindow(Stride.Graphics.SDL.Window window)
-			=> OperatingSystem.IsWindows() ? SdlNativeWindow.GetWin32Hwnd(window) : SdlNativeWindow.GetCocoaNsWindow(window);
+			=> OperatingSystem.IsWindows() ? SdlNativeWindow.GetWin32Hwnd(window)
+				: OperatingSystem.IsLinux() ? window.SdlHandle // the SDL_Window*: Linux drives the overlay through SDL's own API
+				: SdlNativeWindow.GetCocoaNsWindow(window);
 
 		public static void MakeBorderless(IntPtr window)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.MakeBorderless(window);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.SetBordered(window, false);
 			else CocoaOverlayInterop.MakeBorderless(window);
 		}
 
 		public static void MakeTitled(IntPtr window)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.MakeTitled(window);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.SetBordered(window, true);
 			else CocoaOverlayInterop.MakeTitled(window);
 		}
 
-		/// <summary>macOS lets clicks fall through the overlay to the WPF element (which forwards them); a Windows overlay is a real
+		/// <summary>macOS lets clicks fall through the overlay to the WPF element (which forwards them); a Windows or Linux overlay is a real
 		/// window that receives its own input, so this does nothing there.</summary>
 		public static void SetIgnoresMouseEvents(IntPtr window, bool value)
 		{
@@ -43,48 +49,152 @@ namespace ICSharpCode.StrideGameStudio
 		public static void AddChildWindow(IntPtr host, IntPtr child)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.SetOwner(child, host);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.SetTransientFor(child, host);
 			else CocoaOverlayInterop.AddChildWindow(host, child);
 		}
 
 		public static void RemoveChildWindow(IntPtr host, IntPtr child)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.SetOwner(child, IntPtr.Zero);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.SetTransientFor(child, IntPtr.Zero);
 			else CocoaOverlayInterop.RemoveChildWindow(host, child);
 		}
 
 		public static void OrderOut(IntPtr window)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.Hide(window);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.Hide(window);
 			else CocoaOverlayInterop.OrderOut(window);
 		}
 
 		public static void OrderFront(IntPtr window)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.ShowNoActivate(window);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.Show(window);
 			else CocoaOverlayInterop.OrderFront(window);
 		}
 
 		public static void MakeKey(IntPtr window)
 		{
 			if (OperatingSystem.IsWindows()) Win32OverlayInterop.Focus(window);
+			else if (OperatingSystem.IsLinux()) LinuxOverlayInterop.Focus(window);
 			else CocoaOverlayInterop.MakeKey(window);
 		}
 
 		public static bool IsKeyWindow(IntPtr window)
-			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.IsForeground(window) : CocoaOverlayInterop.IsKeyWindow(window);
+			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.IsForeground(window)
+				: OperatingSystem.IsLinux() ? LinuxOverlayInterop.HasInputFocus(window)
+				: CocoaOverlayInterop.IsKeyWindow(window);
 
 		public static bool IsMainWindow(IntPtr window)
-			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.IsForeground(window) : CocoaOverlayInterop.IsMainWindow(window);
+			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.IsForeground(window)
+				: OperatingSystem.IsLinux() ? LinuxOverlayInterop.HasInputFocus(window)
+				: CocoaOverlayInterop.IsMainWindow(window);
 
 		public static long GetWindowNumber(IntPtr window)
-			=> OperatingSystem.IsWindows() ? window.ToInt64() : CocoaOverlayInterop.GetWindowNumber(window);
+			=> OperatingSystem.IsWindows() ? window.ToInt64()
+				: OperatingSystem.IsLinux() ? LinuxOverlayInterop.NativeId(window)
+				: CocoaOverlayInterop.GetWindowNumber(window);
 
 		public static long WindowNumberAtPoint(double x, double y)
-			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.WindowAtPoint((int)x, (int)y) : CocoaOverlayInterop.WindowNumberAtPoint(x, y);
+			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.WindowAtPoint((int)x, (int)y)
+				: OperatingSystem.IsLinux() ? 0 // X11 has no cheap top-most-at-point query; the Linux verification judges what is on screen instead
+				: CocoaOverlayInterop.WindowNumberAtPoint(x, y);
 
-		/// <summary>The overlay window's frame. Windows: virtual-screen pixels with a TOP-left origin (macOS: Cocoa points, bottom-left).</summary>
+		/// <summary>The overlay window's frame. Windows and Linux: virtual-screen pixels with a TOP-left origin (macOS: Cocoa points, bottom-left).</summary>
 		public static CocoaOverlayInterop.NSRect GetFrame(IntPtr window)
-			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.GetFrame(window) : CocoaOverlayInterop.GetFrame(window);
+			=> OperatingSystem.IsWindows() ? Win32OverlayInterop.GetFrame(window)
+				: OperatingSystem.IsLinux() ? LinuxOverlayInterop.GetFrame(window)
+				: CocoaOverlayInterop.GetFrame(window);
+
+		/// <summary>Places the overlay over a screen rectangle in pixels, top-left origin (Windows and Linux).</summary>
+		public static void SetScreenRect(IntPtr window, int x, int y, int width, int height)
+		{
+			if (OperatingSystem.IsLinux()) LinuxOverlayInterop.SetScreenRect(window, x, y, width, height);
+			else Win32OverlayInterop.SetScreenRect(window, x, y, width, height);
+		}
+	}
+
+	/// <summary>
+	/// Linux (X11) side of <see cref="OverlayNative"/>. The overlay handle is the SDL_Window*, so SDL moves, sizes, shows, hides and focuses the
+	/// window; the one thing SDL cannot say is that it belongs to another window, which libX11's WM_TRANSIENT_FOR hint does (the host's X11 window
+	/// comes from the LibreWPF render window): a window manager then keeps the overlay above its host, hides it with it and out of the task bar.
+	/// Coordinates are screen pixels, top-left origin.
+	/// </summary>
+	static unsafe class LinuxOverlayInterop
+	{
+		const uint WindowFlagInputFocus = 0x200;
+		const nuint XaWmTransientFor = 68;
+
+		[DllImport("libX11.so.6")] static extern int XSetTransientForHint(IntPtr display, nuint window, nuint transientFor);
+		[DllImport("libX11.so.6")] static extern int XDeleteProperty(IntPtr display, nuint window, nuint property);
+		[DllImport("libX11.so.6")] static extern int XFlush(IntPtr display);
+
+		static Silk.NET.SDL.Sdl Sdl { get { return Stride.Graphics.SDL.Window.SDL; } }
+
+		static Silk.NET.SDL.Window* Win(IntPtr handle) { return (Silk.NET.SDL.Window*)handle; }
+
+		public static void SetBordered(IntPtr handle, bool bordered)
+			=> Sdl.SetWindowBordered(Win(handle), bordered ? Silk.NET.SDL.SdlBool.True : Silk.NET.SDL.SdlBool.False);
+
+		public static void SetScreenRect(IntPtr handle, int x, int y, int width, int height)
+		{
+			Sdl.SetWindowPosition(Win(handle), x, y);
+			Sdl.SetWindowSize(Win(handle), Math.Max(1, width), Math.Max(1, height));
+		}
+
+		public static void Show(IntPtr handle)
+		{
+			Sdl.ShowWindow(Win(handle));
+			Sdl.RaiseWindow(Win(handle));
+		}
+
+		public static void Hide(IntPtr handle) => Sdl.HideWindow(Win(handle));
+
+		public static void Focus(IntPtr handle) => Sdl.SetWindowInputFocus(Win(handle));
+
+		public static bool HasInputFocus(IntPtr handle) => (Sdl.GetWindowFlags(Win(handle)) & WindowFlagInputFocus) != 0;
+
+		/// <summary>The overlay's X11 window id (its SDL_Window* is not an id the rest of the system knows).</summary>
+		public static long NativeId(IntPtr handle)
+		{
+			if (!TryGetX11(handle, out _, out nuint window))
+				return 0;
+			return (long)window;
+		}
+
+		/// <summary>Marks the overlay as transient for the host's X11 window; a zero host removes the relation.</summary>
+		public static void SetTransientFor(IntPtr handle, IntPtr hostX11Window)
+		{
+			if (!TryGetX11(handle, out IntPtr display, out nuint window))
+				return;
+			if (hostX11Window == IntPtr.Zero)
+				XDeleteProperty(display, window, XaWmTransientFor);
+			else
+				XSetTransientForHint(display, window, (nuint)hostX11Window.ToInt64());
+			XFlush(display);
+		}
+
+		public static CocoaOverlayInterop.NSRect GetFrame(IntPtr handle)
+		{
+			int x, y, w, h;
+			Sdl.GetWindowPosition(Win(handle), &x, &y);
+			Sdl.GetWindowSize(Win(handle), &w, &h);
+			return new CocoaOverlayInterop.NSRect(x, y, w, h);
+		}
+
+		static bool TryGetX11(IntPtr handle, out IntPtr display, out nuint window)
+		{
+			display = IntPtr.Zero;
+			window = 0;
+			var info = new Silk.NET.SDL.SysWMInfo();
+			Sdl.GetVersion(ref info.Version);
+			if (!Sdl.GetWindowWMInfo(Win(handle), &info))
+				return false;
+			display = (IntPtr)info.Info.X11.Display;
+			window = (nuint)info.Info.X11.Window;
+			return display != IntPtr.Zero && window != 0;
+		}
 	}
 
 	/// <summary>

@@ -93,7 +93,7 @@ public sealed class StrideOdaddinInstallTests
 				// HWND host, which only the Windows (WinForms editor) variant of the package carries, so the cross-platform package fails this on Windows.
 				if (Environment.GetEnvironmentVariable("STRIDE_CHECK_VIEWPORT") == "1")
 				{
-					Assert.True(OperatingSystem.IsMacOS() || OperatingSystem.IsWindows(), "STRIDE_CHECK_VIEWPORT needs macOS or Windows: there is no scene viewport on Linux yet.");
+					Assert.True(OperatingSystem.IsMacOS() || OperatingSystem.IsWindows() || OperatingSystem.IsLinux(), "STRIDE_CHECK_VIEWPORT needs macOS, Windows or Linux.");
 					string scene = Path.Combine(gameDir, "..", "Assets", "MainScene.sdscene");
 					Assert.True(File.Exists(scene), "The template's scene is missing: " + scene);
 					var openedScene = await second.InvokeAsync("od.open-file", Path.GetFullPath(scene));
@@ -103,14 +103,17 @@ public sealed class StrideOdaddinInstallTests
 					{
 						sceneStatus = await second.InvokeAsync("od.stride.scene-status");
 						return sceneStatus.TryGetProperty("running", out var r) && r.ValueKind == JsonValueKind.True;
-					}, TimeSpan.FromSeconds(OperatingSystem.IsWindows() ? 240 : 120));
+					}, TimeSpan.FromSeconds(OperatingSystem.IsMacOS() ? 120 : 240));
 					Assert.True(running, "The scene viewport did not start in the installed add-in: " + sceneStatus + "\n" + second.Output);
 					// "Running" says the controller started. On Windows also prove the native window is placed over the element and on top, the game
 					// renders frames, real pixels are on screen there and real OS pointer input reaches the game.
-					if (OperatingSystem.IsWindows())
-						await WindowsOverlayVerification.VerifyAsync(second,
-							Environment.GetEnvironmentVariable("STRIDE_VIEWPORT_SHOT_DIR") is { Length: > 0 } shots ? shots : Path.Combine(Path.GetTempPath(), "stride-viewport-shots"),
-							(poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
+					{
+						string shotDirectory = Environment.GetEnvironmentVariable("STRIDE_VIEWPORT_SHOT_DIR") is { Length: > 0 } shots ? shots : Path.Combine(Path.GetTempPath(), "stride-viewport-shots");
+						if (OperatingSystem.IsWindows())
+							await WindowsOverlayVerification.VerifyAsync(second, shotDirectory, (poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
+						else if (OperatingSystem.IsLinux())
+							await LinuxOverlayVerification.VerifyAsync(second, shotDirectory, (poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
+					}
 				}
 			}
 		}

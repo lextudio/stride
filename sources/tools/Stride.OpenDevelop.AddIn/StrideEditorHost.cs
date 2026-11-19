@@ -173,9 +173,13 @@ namespace ICSharpCode.StrideGameStudio
 
 			// The SDL2 native for this OS: the dylib next to the assemblies on macOS, the runtimes/<rid>/native copy on Windows (the package
 			// carries both, and loading the other OS's file fails with BadImageFormatException).
+			var arm64 = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64;
 			var sdlFileName = OperatingSystem.IsWindows()
-				? Path.Combine("runtimes", System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "win-arm64" : "win-x64", "native", "SDL2.dll")
-				: "libSDL2-2.0.dylib";
+				? Path.Combine("runtimes", arm64 ? "win-arm64" : "win-x64", "native", "SDL2.dll")
+				: OperatingSystem.IsLinux()
+					// Linux: the package's own SDL2 (Vulkan surface support included); the Vulkan loader itself (libvulkan.so.1) is the system's.
+					? Path.Combine("runtimes", arm64 ? "linux-arm64" : "linux-x64", "native", "libSDL2-2.0.so")
+					: "libSDL2-2.0.dylib";
 			NativeLibrary.SetDllImportResolver(typeof(Silk.NET.SDL.Sdl).Assembly, (name, assembly, searchPath) =>
 			{
 				if (name.Contains("SDL", StringComparison.OrdinalIgnoreCase))

@@ -188,9 +188,9 @@ namespace ICSharpCode.StrideGameStudio
 				await StartWithEditorHostAsync();
 				return;
 			}
-			if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows())
+			if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows() && !OperatingSystem.IsLinux())
 			{
-				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] windowed overlay is macOS and Windows only (Windows also with the WinForms editor assemblies); no viewport on this platform yet.");
+				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] windowed overlay is macOS, Windows and Linux only; no viewport on this platform.");
 				return;
 			}
 
@@ -400,17 +400,19 @@ namespace ICSharpCode.StrideGameStudio
 
 			var hostResolved = OperatingSystem.IsWindows()
 				? LibreWpfHostWindow.TryGetWin32Hwnd(hostWindow, out hostNsWindow)
-				: LibreWpfHostWindow.TryGetCocoaNsWindow(hostWindow, out hostNsWindow);
+				: OperatingSystem.IsLinux()
+					? LibreWpfHostWindow.TryGetX11Window(hostWindow, out hostNsWindow)
+					: LibreWpfHostWindow.TryGetCocoaNsWindow(hostWindow, out hostNsWindow);
 			if (!hostResolved || hostNsWindow == IntPtr.Zero)
 			{
-				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] could not resolve the host window's native window (NSWindow or HWND); overlay not attached.");
+				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] could not resolve the host window's native window (NSWindow, HWND or X11 window); overlay not attached.");
 				return;
 			}
 
 			OverlayNative.AddChildWindow(hostNsWindow, sdlNsWindow);
 			attached = true;
 			Reposition();
-			if (OperatingSystem.IsWindows())
+			if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
 				TrackHostWindow(hostWindow);
 		}
 
@@ -464,7 +466,7 @@ namespace ICSharpCode.StrideGameStudio
 			var w = ActualWidth;
 			var h = ActualHeight;
 
-			if (OperatingSystem.IsWindows())
+			if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
 			{
 				// Screen pixels, top-left origin, taken from the element's own corners so the result does not depend on how this WPF
 				// implementation scales DIPs: PointToScreen already answers in screen space.
@@ -478,7 +480,7 @@ namespace ICSharpCode.StrideGameStudio
 				if (placed == lastOverlayRect)
 					return;
 				lastOverlayRect = placed;
-				Win32OverlayInterop.SetScreenRect(sdlNsWindow, (int)Math.Round(tl.X), (int)Math.Round(tl.Y), pw, ph);
+				OverlayNative.SetScreenRect(sdlNsWindow, (int)Math.Round(tl.X), (int)Math.Round(tl.Y), pw, ph);
 				OverlayNative.OrderFront(sdlNsWindow);
 				if (sdlWindow != null)
 				{
@@ -824,7 +826,10 @@ namespace ICSharpCode.StrideGameStudio
 			// input to windows it thinks are not shown.
 			var sdlVisible = sdlWindow?.Visible ?? false;
 			var myNum = sdlNsWindow != IntPtr.Zero ? OverlayNative.GetWindowNumber(sdlNsWindow) : 0;
-			var hostNum = hostNsWindow != IntPtr.Zero ? OverlayNative.GetWindowNumber(hostNsWindow) : 0;
+			// On Linux the host handle is already the X11 window id (the overlay's handle is an SDL_Window*, which GetWindowNumber turns into an id).
+			var hostNum = hostNsWindow == IntPtr.Zero ? 0
+				: OperatingSystem.IsLinux() ? hostNsWindow.ToInt64()
+				: OverlayNative.GetWindowNumber(hostNsWindow);
 			var numAtCentre = frame.W > 0
 				? OverlayNative.WindowNumberAtPoint(frame.X + frame.W / 2, frame.Y + frame.H / 2)
 				: 0;
