@@ -2,7 +2,7 @@
   <Manifest>
     <!-- The version is the release tag without its "v" (PackOdAddin refuses a package whose manifest and tag disagree);
          the SharpDevelop dependency states which OpenDevelop versions this build was made for. -->
-    <Identity name="ICSharpCode.StrideGameStudio" version="0.1.0" />
+    <Identity name="ICSharpCode.StrideGameStudio" version="0.1.1-rc1" />
     <Dependency addin="SharpDevelop" version="5.9" />
   </Manifest>
   <Runtime>

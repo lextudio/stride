@@ -1,10 +1,11 @@
 name: Test the released OpenDevelop add-in
 
 # Installs the PUBLISHED ICSharpCode.StrideGameStudio.odaddin (the asset of a release of this repository, downloaded from GitHub and checked
-# against the release's SHA-256 digest) into an isolated OpenDevelop release on Windows and Linux, restarts it, and checks that the add-in
-# loads and shows the assets of a Stride game: the same journey as sources/tools/Stride.OpenDevelop.AddIn.Tests/StrideOdaddinInstallTests.cs.
-# macOS is tested on a developer machine (STRIDE_CHECK_VIEWPORT=1 also opens a scene there); the scene viewport exists only on macOS, so
-# these two jobs do not look for it.
+# against the release's SHA-256 digest) into an isolated OpenDevelop release on Windows, macOS and Linux, restarts it, and checks that the
+# add-in loads and shows the assets of a Stride game: the same journey as sources/tools/Stride.OpenDevelop.AddIn.Tests/StrideOdaddinInstallTests.cs.
+# Windows and macOS also open a scene (STRIDE_CHECK_VIEWPORT=1: a real SDL window over the viewport, frames advancing, pixels on screen) and
+# upload the screenshots; Linux has no scene viewport yet, so its job only checks the install journey. The Stride game is restored first, or its
+# engine assets and shaders would not load and the viewport would stay black.
 #
 # Run it by hand after a release (gh workflow run test-odaddin-release.yml --ref librewpf-port -f tag=v0.1.0), or push a change to this file:
 # that run tests the default release below.
@@ -46,9 +47,15 @@ jobs:
           - name: windows-x64
             runner: windows-2025
             opendevelop_asset: OpenDevelop-win.7z
+            viewport: '1'
+          - name: macos-arm64
+            runner: macos-15
+            opendevelop_asset: OpenDevelop-macos.dmg
+            viewport: '1'
           - name: linux-x64
             runner: ubuntu-24.04
             opendevelop_asset: OpenDevelop-linux-x64.tar.xz
+            viewport: '0'
     steps:
       # The game the test opens, and the test project itself. The files above the test project are listed too: its PackageReference carries no
       # version (sources/Directory.Packages.props), global.json pins the SDK and nuget.config names the package sources. A leading slash anchors a
@@ -118,18 +125,39 @@ jobs:
           gh release download $env:OPENDEVELOP_TAG --repo $env:OPENDEVELOP_REPOSITORY --pattern '${{ matrix.opendevelop_asset }}' --dir $root
           if ($LASTEXITCODE -ne 0) { throw 'could not download OpenDevelop' }
           $archive = Join-Path $root '${{ matrix.opendevelop_asset }}'
-          if ($IsWindows) { 7z x $archive "-o$root" -y | Out-Null } else { tar -xf $archive -C $root }
+          if ($IsWindows) { 7z x $archive "-o$root" -y | Out-Null }
+          elseif ($IsMacOS) {
+            # A DMG: mount it, copy the app out (the mounted image is read-only and goes away), detach.
+            $mount = Join-Path $env:RUNNER_TEMP 'dmg'
+            hdiutil attach $archive -mountpoint $mount -nobrowse -quiet
+            if ($LASTEXITCODE -ne 0) { throw 'could not mount the OpenDevelop DMG' }
+            try { cp -R (Get-ChildItem $mount -Filter '*.app' | Select-Object -First 1).FullName $root } finally { hdiutil detach $mount -quiet }
+          }
+          else { tar -xf $archive -C $root }
           if ($LASTEXITCODE -ne 0) { throw 'could not extract OpenDevelop' }
           # The archive's top folder name is not part of any contract: find the folder that holds the host.
-          $dll = Get-ChildItem $root -Recurse -Depth 2 -Filter 'OpenDevelop.dll' | Select-Object -First 1
+          $dll = Get-ChildItem $root -Recurse -Depth 6 -Filter 'OpenDevelop.dll' | Select-Object -First 1
           if (-not $dll) { throw "OpenDevelop.dll is not in $env:OPENDEVELOP_TAG" }
           "OD_IT_IDE_DLL=$($dll.FullName)" >> $env:GITHUB_ENV
           "host: $($dll.FullName)"
+
+      # Without the game's packages (Stride's engine assets and shaders) the game faults and the viewport is black while everything reports
+      # "running": restore it so the viewport check sees a real scene.
+      - name: Restore the Stride game
+        if: matrix.viewport == '1'
+        shell: bash
+        env:
+          NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
+        run: |
+          mkdir -p ../OpenDevelop/artifacts/openavalon-feed
+          dotnet restore samples/Templates/FirstPersonShooter/FirstPersonShooter/FirstPersonShooter.Game/FirstPersonShooter.Game.csproj
 
       - name: Install the released add-in, restart, open a Stride game
         shell: bash
         env:
           STRIDE_CHECKOUT_ROOT: ${{ github.workspace }}
+          STRIDE_CHECK_VIEWPORT: ${{ matrix.viewport }}
+          STRIDE_VIEWPORT_SHOT_DIR: ${{ runner.temp }}/viewport-shots
           # NuGet fails on a local source that does not exist (nuget.config lists a developer's synchronized OpenAvalon feed beside the checkout).
           NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
         run: |
@@ -150,3 +178,12 @@ jobs:
             exit 1
           fi
           exit "$status"
+
+      - name: Upload the viewport screenshots
+        if: always() && matrix.viewport == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: viewport-${{ matrix.name }}
+          path: ${{ runner.temp }}/viewport-shots
+          if-no-files-found: warn
+          retention-days: 7
