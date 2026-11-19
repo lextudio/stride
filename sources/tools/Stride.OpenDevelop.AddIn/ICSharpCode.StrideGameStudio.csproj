@@ -309,6 +309,25 @@
           Condition="Exists('@(_SdlDylibForInstallName)')"
           StandardOutputImportance="low" />
   </Target>
+  <!-- A distribution build ships the package definitions and templates the editor looks up by name in a source tree
+       (StrideDefaultTemplates.Load and PackageSession.FindSourceTreePackageFile, both reached through STRIDE_SOURCE_ROOT): an
+       installed add-in has no Stride checkout, and the checkout path baked in at build time is the build machine's. The files
+       keep the checkout's sources/ layout (the .sdpkg files name template folders by relative path, for example
+       ../../data/StridePackage/Templates/Core), under StrideSource beside the add-in; StrideEditorHost points
+       STRIDE_SOURCE_ROOT at it. Code and build output are not needed there. -->
+  <Target Name="StrideAddInShipSourceTree" AfterTargets="Build" Condition="'$(OpenDevelopDistributionBuild)' == 'true'">
+    <PropertyGroup>
+      <_StrideSourceRoot>$(StrideRoot)</_StrideSourceRoot>
+      <_StrideSourceExclude>$(StrideRoot)sources\**\bin\**;$(StrideRoot)sources\**\obj\**;$(StrideRoot)sources\**\*.cs;$(StrideRoot)sources\**\*.csproj;$(StrideRoot)sources\**\*.user;$(StrideRoot)sources\**\*.Tests\**</_StrideSourceExclude>
+    </PropertyGroup>
+    <ItemGroup>
+      <_StrideSourceFile Include="$(StrideRoot)sources\editor\Stride.Assets.Presentation\Stride.Assets.Presentation.sdpkg" />
+      <_StrideSourceFile Include="$(StrideRoot)sources\editor\Stride.Assets.Presentation\Templates\**\*;$(StrideRoot)sources\editor\Stride.Assets.Presentation\EditorPackage\**\*" Exclude="$(_StrideSourceExclude)" />
+      <_StrideSourceFile Include="$(StrideRoot)sources\data\StridePackage\**\*" Exclude="$(_StrideSourceExclude)" />
+      <_StrideSourceFile Include="$(StrideRoot)sources\engine\Stride.SpriteStudio.Offline\**\*;$(StrideRoot)sources\engine\Stride.Engine\**\*;$(StrideRoot)sources\engine\Stride.Rendering\**\*;$(StrideRoot)sources\engine\Stride.Graphics\**\*;$(StrideRoot)sources\engine\Stride.Particles\**\*;$(StrideRoot)sources\engine\Stride.Voxels\**\*;$(StrideRoot)sources\engine\Stride.Video\**\*" Exclude="$(_StrideSourceExclude)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StrideSourceFile)" DestinationFiles="@(_StrideSourceFile->'$(OutputPath)StrideSource\$([MSBuild]::MakeRelative('$(_StrideSourceRoot)', '%(FullPath)'))')" SkipUnchangedFiles="true" />
+  </Target>
   <!-- Wholesale copy of Stride.GameStudio's own bin output: this is a plain net10.0-windows IL
        folder (AppendRuntimeIdentifierToOutputPath=false), so copying it next to this addin's own
        dll and letting the OpenDevelop host process (already past its own framework-startup gate)

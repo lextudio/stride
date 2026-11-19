@@ -82,11 +82,19 @@ namespace ICSharpCode.StrideGameStudio
 			// consumes Stride via raw file references rather than a NuGet-restored install, so
 			// PackageStore.GetPackageFileName always misses. $(StrideCheckoutRoot) is baked in at
 			// build time as assembly metadata (see the csproj) since it can be overridden per build.
-			var checkoutRoot = typeof(StrideEditorHost).Assembly
-				.GetCustomAttributes<AssemblyMetadataAttribute>()
-				.FirstOrDefault(a => a.Key == "StrideCheckoutRoot")?.Value;
+			// An installed .odaddin has no Stride checkout on the user's machine: the release package carries the
+			// package definitions and templates these lookups need in its own StrideSource folder (laid out like the
+			// checkout's sources/), and that copy wins. The baked checkout root is the fallback for a developer build.
+			var checkoutRoot = Path.Combine(addinDir ?? "", "StrideSource");
+			if (!Directory.Exists(Path.Combine(checkoutRoot, "sources")))
+				checkoutRoot = typeof(StrideEditorHost).Assembly
+					.GetCustomAttributes<AssemblyMetadataAttribute>()
+					.FirstOrDefault(a => a.Key == "StrideCheckoutRoot")?.Value;
 			if (!string.IsNullOrEmpty(checkoutRoot))
+			{
 				Environment.SetEnvironmentVariable("STRIDE_SOURCE_ROOT", checkoutRoot);
+				ICSharpCode.Core.LoggingService.Info("[StrideEditorHost] STRIDE_SOURCE_ROOT = " + checkoutRoot);
+			}
 
 			// Route Stride's own diagnostic logging (GlobalLogger - process-wide, independent of
 			// any particular LoggerResult instance) into OpenDevelop's log, so failures that Stride
