@@ -53,10 +53,17 @@ internal static class WindowsOverlayVerification
 
 		// 2. Frames: the game's own frame counter advances and the game has not faulted.
 		long frames0 = Input(status).GetProperty("gameFrames").GetInt64();
-		await Task.Delay(2500);
-		status = await ide.InvokeAsync("od.stride.scene-status");
-		long frames1 = Input(status).GetProperty("gameFrames").GetInt64();
-		Assert.True(frames1 - frames0 >= 10, $"The game is not producing frames: gameFrames {frames0} -> {frames1} in 2.5 s.\n{status}");
+		// Steady progress, not speed: a machine without a GPU (a CI runner renders with WARP) manages only a few frames a second, a GPU
+		// dozens. Wait up to 20 s for 5 more frames; a frozen game advances none.
+		long frames1 = frames0;
+		var framesDeadline = DateTime.UtcNow.AddSeconds(20);
+		while (frames1 - frames0 < 5 && DateTime.UtcNow < framesDeadline)
+		{
+			await Task.Delay(500);
+			status = await ide.InvokeAsync("od.stride.scene-status");
+			frames1 = Input(status).GetProperty("gameFrames").GetInt64();
+		}
+		Assert.True(frames1 - frames0 >= 5, $"The game is not producing frames: gameFrames {frames0} -> {frames1} in 20 s.\n{status}");
 		Assert.False(Input(status).TryGetProperty("gameFaulted", out var faulted) && faulted.ValueKind == JsonValueKind.True,
 			"The editor game is faulted (it ticks but renders nothing): " + (Input(status).TryGetProperty("lastFault", out var fault) ? fault.GetString() : "?") + "\n" + status + "\n" + ide.Output);
 
@@ -64,7 +71,15 @@ internal static class WindowsOverlayVerification
 		var fr = status.GetProperty("frame");
 		var rect = new Rectangle((int)fr.GetProperty("x").GetDouble(), (int)fr.GetProperty("y").GetDouble(), (int)fr.GetProperty("w").GetDouble(), (int)fr.GetProperty("h").GetDouble());
 		string shot = Path.Combine(shotDirectory, "viewport.png");
+		// The first frames are the empty editor (grid, gizmo) while the game's assets load and its shaders compile: on a machine without a GPU
+		// that takes tens of seconds, so look until the scene shows up and judge the last capture.
 		var (distinct, dominantShare) = CapturePixels(rect, shot);
+		var sceneDeadline = DateTime.UtcNow.AddSeconds(40);
+		while (!(distinct >= 200 && dominantShare < 0.90) && DateTime.UtcNow < sceneDeadline)
+		{
+			await Task.Delay(2000);
+			(distinct, dominantShare) = CapturePixels(rect, shot);
+		}
 		Assert.True(distinct >= 200 && dominantShare < 0.90,
 			$"The screen area of the viewport looks empty or flat: {distinct} distinct colours, the most common covers {dominantShare:P0}. Screenshot: {shot}\n{status}\n{ide.Output}");
 
