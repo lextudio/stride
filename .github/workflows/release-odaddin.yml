@@ -131,7 +131,8 @@ jobs:
             # cross-platform: AnyCPU assemblies, the headless editor path and Vulkan, so one package runs on every desktop OS whatever machine builds it.
             # windows-experiment: Stride's own Windows editor path (WinForms game form + GameEngineHost) with the build host's default Direct3D11; it
             # only works on Windows and is for trying the viewport there.
-            $variantFlags = if ($env:VARIANT -eq 'cross-platform') { @('-p:StrideEditorAnyCpu=true', '-p:StrideEditorHeadless=true', '-p:StrideGraphicsApis=Vulkan') } else { @('-p:StrideEditorAnyCpu=true') }
+            # [string[]], not untyped: a one-element array assigned from an if/else is unrolled to a string, and splatting a string passes its characters.
+            [string[]]$variantFlags = if ($env:VARIANT -eq 'cross-platform') { @('-p:StrideEditorAnyCpu=true', '-p:StrideEditorHeadless=true', '-p:StrideGraphicsApis=Vulkan') } else { @('-p:StrideEditorAnyCpu=true') }
             dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
               -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
               -p:WarningLevel=0 @variantFlags -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
