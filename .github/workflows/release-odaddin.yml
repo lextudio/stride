@@ -123,7 +123,7 @@ jobs:
             dotnet --version
             dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
               -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
-              -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideEditorHeadless=true -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
+              -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideEditorHeadless=true -p:StrideGraphicsApis=Vulkan -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
               -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
               -p:StrideAddInDeployDir="$out\" `
               -p:OpenDevelopDistributionBuild=true `
@@ -181,6 +181,10 @@ jobs:
             }
             # The editor assemblies must run on every desktop OS whatever machine built them: AnyCPU (not the win-x64 pin), and the headless
             # editor path (not the WinForms one, which bakes STA threads and WinForms windows in and fails on macOS).
+            # Stride picks its graphics API by the build host (Direct3D11 on Windows), and macOS can only render with Vulkan (MoltenVK):
+            # the release is built with -p:StrideGraphicsApis=Vulkan, so the root Stride.Graphics.dll is the Vulkan one and no Direct3D11 tree rides along.
+            if ($names -notcontains 'Vulkan/Stride.Graphics.dll') { throw 'the package lacks Vulkan/Stride.Graphics.dll: build with -p:StrideGraphicsApis=Vulkan' }
+            if ($names | Where-Object { $_ -like 'Direct3D11/*' }) { throw 'the package carries a Direct3D11 build of Stride.Graphics: build with -p:StrideGraphicsApis=Vulkan' }
             function Read-Entry([string]$name) {
               $entry = $zip.GetEntry($name)
               if (-not $entry) { throw "the package lacks $name" }
