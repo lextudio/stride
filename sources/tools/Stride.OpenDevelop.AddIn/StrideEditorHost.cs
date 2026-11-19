@@ -169,7 +169,11 @@ namespace ICSharpCode.StrideGameStudio
 			{
 				var sdlPath = Path.Combine(addinDir, "libSDL2-2.0.dylib");
 				if (File.Exists(sdlPath))
+				{
 					NativeLibrary.Load(sdlPath);
+					// Stride.Graphics' SDL window creates its Sdl API from this absolute path (see Window.InitializeSDL).
+					AppContext.SetData("Stride.SdlLibraryPath", sdlPath);
+				}
 			}
 			catch (Exception ex)
 			{

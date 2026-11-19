@@ -123,7 +123,7 @@ jobs:
             dotnet --version
             dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
               -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
-              -p:WarningLevel=0 -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
+              -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
               -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
               -p:StrideAddInDeployDir="$out\" `
               -p:OpenDevelopDistributionBuild=true `

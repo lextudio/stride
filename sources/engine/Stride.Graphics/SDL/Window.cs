@@ -39,7 +39,13 @@ namespace Stride.Graphics.SDL
 
         private static void InitializeSDL()
         {
-            var sdl = Silk.NET.SDL.Sdl.GetApi();
+            // OpenDevelop add-in: Silk's own loader only tries the bare name "libSDL2-2.0.dylib" on macOS, which
+            // matches an already-loaded image only when its install name has been rewritten. The host passes the
+            // absolute path of the shipped dylib instead, so the package needs no install_name_tool/codesign step.
+            var sdlPath = AppContext.GetData("Stride.SdlLibraryPath") as string;
+            var sdl = !string.IsNullOrEmpty(sdlPath) && System.IO.File.Exists(sdlPath)
+                ? new Silk.NET.SDL.Sdl(new Silk.NET.Core.Contexts.DefaultNativeContext(sdlPath))
+                : Silk.NET.SDL.Sdl.GetApi();
 
             // jklawreszuk: Workaround for wayland (see #2487 for more details)
             // TODO: Wayland SDL_EGL_MakeCurrent does not cover multi-context scenario (https://github.com/libsdl-org/SDL/issues/9072)

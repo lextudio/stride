@@ -264,6 +264,14 @@
          addin's own root, so it needs its own copy of the runtimes tree placed there too. -->
     <Copy SourceFiles="@(StrideRt)" DestinationFiles="@(StrideRt->'$(OutputPath)Vulkan\runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(NativeSdl)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+    <!-- MoltenVK for the macOS scene viewport is vendored in deps/. Stride.Graphics selects it by the TARGET platform,
+         which on a Windows or Linux build host is not macOS, so the runtimes trees above lack it there and a package built
+         on such a host would have no Vulkan loader on macOS. Add it explicitly, beside the other osx-arm64 natives. -->
+    <ItemGroup>
+      <StrideMoltenVk Include="$(StrideRoot)deps\MoltenVK\dotnet\osx-arm64\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(StrideMoltenVk)" DestinationFolder="$(OutputPath)runtimes\osx-arm64\native" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(StrideMoltenVk)" DestinationFolder="$(OutputPath)Vulkan\runtimes\osx-arm64\native" SkipUnchangedFiles="true" />
     <!-- The two-way write-back into OpenDevelop's own host bin (previously required here for
          libSDL2-2.0.dylib and libvulkan.1.dylib/MoltenVK_icd.json - "bare-name native loaders only
          probe AppContext.BaseDirectory") is gone. StrideEditorHost's static constructor now
@@ -282,9 +290,10 @@
        viewport never starts. libvulkan.1.dylib escapes this only because its install name already
        IS the bare leaf name. Giving SDL the same shape is what makes the preloading work: once
        the image's install name is "libSDL2-2.0.dylib", dyld matches Silk's leaf request against
-       the already-loaded image instead of going to disk. Nothing links against SDL (the .NET side
+       the already-loaded image instead of going to disk. (A distribution build skips this: the package must not depend on
+       the build host, so StrideEditorHost hands Window.InitializeSDL the dylib's absolute path instead.) Nothing links against SDL (the .NET side
        only ever loads it dynamically), so rewriting the id breaks no dependent. -->
-  <Target Name="NormalizeSdlInstallName" AfterTargets="CopyStrideRuntimes" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+  <Target Name="NormalizeSdlInstallName" AfterTargets="CopyStrideRuntimes" Condition="$([MSBuild]::IsOSPlatform('OSX')) And '$(OpenDevelopDistributionBuild)' != 'true'">
     <ItemGroup>
       <_SdlDylibForInstallName Include="$(OutputPath)libSDL2-2.0.dylib" />
     </ItemGroup>

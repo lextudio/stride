@@ -87,6 +87,23 @@ public sealed class StrideOdaddinInstallTests
 					return Flatten(assets).Any(n => n.GetProperty("name").GetString()!.EndsWith(".sdscene", StringComparison.OrdinalIgnoreCase));
 				}, TimeSpan.FromSeconds(90));
 				Assert.True(shown, "The installed add-in did not surface the game's .sdscene under Assets: " + assets);
+
+				// Opt-in, macOS only (the live scene viewport is a Cocoa overlay there): opening the scene must bring the viewport up.
+				if (Environment.GetEnvironmentVariable("STRIDE_CHECK_VIEWPORT") == "1")
+				{
+					Assert.True(OperatingSystem.IsMacOS(), "STRIDE_CHECK_VIEWPORT needs macOS: the scene viewport exists only there.");
+					string scene = Path.Combine(gameDir, "..", "Assets", "MainScene.sdscene");
+					Assert.True(File.Exists(scene), "The template's scene is missing: " + scene);
+					var openedScene = await second.InvokeAsync("od.open-file", Path.GetFullPath(scene));
+					Assert.True(openedScene.GetProperty("opened").GetBoolean(), openedScene.ToString());
+					JsonElement sceneStatus = default;
+					bool running = await OpenDevelopAppFixture.PollUntilAsync(async () =>
+					{
+						sceneStatus = await second.InvokeAsync("od.stride.scene-status");
+						return sceneStatus.TryGetProperty("running", out var r) && r.ValueKind == JsonValueKind.True;
+					}, TimeSpan.FromSeconds(120));
+					Assert.True(running, "The scene viewport did not start in the installed add-in: " + sceneStatus + "\n" + second.Output);
+				}
 			}
 		}
 		finally
