@@ -201,12 +201,12 @@ jobs:
               # assemblies must exist ONLY in those folders: a flat root copy is what the add-in loader finds first, so its API would win on every OS.
               foreach ($api in 'Vulkan', 'Direct3D11') {
                 foreach ($assembly in 'Stride.Graphics.dll', 'Stride.Games.dll', 'Stride.Input.dll', 'Stride.Video.dll') {
-                  if ($names -notcontains "$api/$assembly") { throw "the package lacks $api/$assembly: build with -p:StrideGraphicsApis=Vulkan%3BDirect3D11" }
+                  if ($names -notcontains "$api/$assembly") { throw "the package lacks ${api}/${assembly}: build with -p:StrideGraphicsApis=Vulkan%3BDirect3D11" }
                 }
                 if ($names -notcontains "$api/runtimes/win-x64/native/avutil-59.dll") { throw "the package lacks the FFmpeg natives under $api/runtimes/win-x64/native" }
               }
               foreach ($assembly in 'Stride.Graphics.dll', 'Stride.Games.dll', 'Stride.Input.dll', 'Stride.Video.dll') {
-                if ($names -contains $assembly) { throw "the package carries a flat root $assembly: the graphics API must come from the per-API folders" }
+                if ($names -contains $assembly) { throw "the package carries a flat root ${assembly}: the graphics API must come from the per-API folders" }
               }
               foreach ($assembly in 'Stride.Assets.Presentation.dll', 'Stride.Editor.dll', 'Stride.GameStudio.dll') {
                 $bytes = Read-Entry $assembly
