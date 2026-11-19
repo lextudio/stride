@@ -154,6 +154,8 @@ jobs:
           # nuget.config lists Stride's own local package folder; NuGet fails on a source that does not exist (NU1301).
           mkdir -p bin/packages
           dotnet restore samples/Templates/FirstPersonShooter/FirstPersonShooter/FirstPersonShooter.Game/FirstPersonShooter.Game.csproj
+          # The editor resolves the executable project's references too (NETSDK1004 without its assets file).
+          dotnet restore samples/Templates/FirstPersonShooter/FirstPersonShooter/FirstPersonShooter.Windows/FirstPersonShooter.Windows.csproj
 
       - name: Install the released add-in, restart, open a Stride game
         shell: bash
