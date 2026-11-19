@@ -27,6 +27,9 @@ on:
       run_id:
         description: 'Optional: id of a release-odaddin.yml run whose package artifact is tested instead of the release (to test a change before releasing it); the tag above must be the version in its manifest'
         default: ''
+      linux_vulkan:
+        description: 'Linux Vulkan driver: stride (the Lavapipe build Stride''s own Linux GPU tests use, Stride.Dependencies.Lavapipe) or mesa (Ubuntu''s)'
+        default: 'stride'
 
 permissions:
   contents: read
@@ -103,6 +106,30 @@ jobs:
       - name: Install the Linux viewport check's tools
         if: runner.os == 'Linux'
         run: sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers vulkan-tools xdotool imagemagick libva2 libva-drm2 > /dev/null
+
+      # Which Vulkan driver renders: by default the Lavapipe build Stride's own Linux GPU tests use and compare with their gold images
+      # (test-linux-game.yml: Stride.Dependencies.Lavapipe, version pinned in sources/Directory.Packages.props), forced with VK_DRIVER_FILES as
+      # there; 'mesa' leaves Ubuntu's Mesa drivers to the loader.
+      - name: Select the Linux Vulkan driver
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          driver="${{ inputs.linux_vulkan || 'stride' }}"
+          if [ "$driver" = stride ]; then
+            version=$(sed -n 's/.*PackageVersion Include="Stride.Dependencies.Lavapipe" Version="\([^"]*\)".*/\1/p' sources/Directory.Packages.props)
+            dir="$RUNNER_TEMP/lavapipe"
+            mkdir -p "$dir"
+            curl -sSfL "https://api.nuget.org/v3-flatcontainer/stride.dependencies.lavapipe/$version/stride.dependencies.lavapipe.$version.nupkg" -o "$dir/lavapipe.nupkg"
+            unzip -q "$dir/lavapipe.nupkg" -d "$dir/pkg"
+            lib=$(find "$dir/pkg" -path "*/runtimes/linux-x64/native/libvulkan_lvp.so" | head -1)
+            if [ -z "$lib" ]; then echo "::error::no libvulkan_lvp.so in Stride.Dependencies.Lavapipe $version"; exit 1; fi
+            echo "{\"file_format_version\":\"1.0.0\",\"ICD\":{\"library_path\":\"$(readlink -f "$lib")\",\"api_version\":\"1.3.0\"}}" > "$dir/lvp_icd.json"
+            echo "VK_DRIVER_FILES=$dir/lvp_icd.json" >> "$GITHUB_ENV"
+            echo "Vulkan driver: Stride.Dependencies.Lavapipe $version ($lib)"
+          else
+            echo "Vulkan driver: Ubuntu's Mesa"
+          fi
+          VK_DRIVER_FILES="$( [ "$driver" = stride ] && echo "$dir/lvp_icd.json" )" vulkaninfo --summary 2>/dev/null | grep -E "deviceName|driverName|driverInfo|apiVersion" | head -8 || true
 
       - name: Download the add-in release and verify its digest
         shell: pwsh
