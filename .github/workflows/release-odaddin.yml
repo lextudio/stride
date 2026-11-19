@@ -123,10 +123,9 @@ jobs:
             dotnet --version
             # One package for every desktop OS whatever machine builds it: AnyCPU assemblies, the headless editor path (SDL window pinned over the
             # WPF element - macOS through Cocoa, Windows through Win32; Stride's WinForms path cannot work here, System.Windows.Forms being
-            # LibreWinForms), and BOTH graphics APIs staged in their own folders: Vulkan (macOS can only render with Vulkan/MoltenVK; listed first,
-            # so the assemblies the build also leaves flat are the Vulkan ones) and Direct3D11 (Windows). StrideEditorHost picks the folder at run time.
-            # %3B is MSBuild's escaped semicolon. [string[]], not untyped: a one-element array assigned from an if/else is unrolled to a string.
-            [string[]]$variantFlags = @('-p:StrideEditorAnyCpu=true', '-p:StrideEditorHeadless=true', '-p:StrideGraphicsApis=Vulkan%3BDirect3D11')
+            # LibreWinForms), and the graphics APIs staged in their own folders. No -p:StrideGraphicsApis: a Windows build defaults to Direct3D11;
+            # Direct3D12;Vulkan (Stride.Graphics.targets), and an explicit Vulkan%3BDirect3D11 built only Vulkan on the runner. StrideEditorHost picks the folder at run time.
+            [string[]]$variantFlags = @('-p:StrideEditorAnyCpu=true', '-p:StrideEditorHeadless=true')
             dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
               -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
               -p:WarningLevel=0 @variantFlags -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
@@ -201,7 +200,7 @@ jobs:
               # assemblies must exist ONLY in those folders: a flat root copy is what the add-in loader finds first, so its API would win on every OS.
               foreach ($api in 'Vulkan', 'Direct3D11') {
                 foreach ($assembly in 'Stride.Graphics.dll', 'Stride.Games.dll', 'Stride.Input.dll', 'Stride.Video.dll') {
-                  if ($names -notcontains "$api/$assembly") { throw "the package lacks ${api}/${assembly}: build with -p:StrideGraphicsApis=Vulkan%3BDirect3D11" }
+                  if ($names -notcontains "$api/$assembly") { throw "the package lacks ${api}/${assembly}: the Windows build must stage both APIs (default Stride.Graphics.targets list)" }
                 }
                 if ($names -notcontains "$api/runtimes/win-x64/native/avutil-59.dll") { throw "the package lacks the FFmpeg natives under $api/runtimes/win-x64/native" }
               }
