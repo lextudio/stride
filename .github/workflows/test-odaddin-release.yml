@@ -1,0 +1,152 @@
+name: Test the released OpenDevelop add-in
+
+# Installs the PUBLISHED ICSharpCode.StrideGameStudio.odaddin (the asset of a release of this repository, downloaded from GitHub and checked
+# against the release's SHA-256 digest) into an isolated OpenDevelop release on Windows and Linux, restarts it, and checks that the add-in
+# loads and shows the assets of a Stride game: the same journey as sources/tools/Stride.OpenDevelop.AddIn.Tests/StrideOdaddinInstallTests.cs.
+# macOS is tested on a developer machine (STRIDE_CHECK_VIEWPORT=1 also opens a scene there); the scene viewport exists only on macOS, so
+# these two jobs do not look for it.
+#
+# Run it by hand after a release (gh workflow run test-odaddin-release.yml --ref librewpf-port -f tag=v0.1.0), or push a change to this file:
+# that run tests the default release below.
+
+on:
+  push:
+    branches: [librewpf-port]
+    paths:
+      - '.github/workflows/test-odaddin-release.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release of this repository to test'
+        default: 'v0.1.0'
+      opendevelop_tag:
+        description: 'OpenDevelop release to install it into'
+        default: 'v5.9.1'
+
+permissions:
+  contents: read
+  # The restore may reach LeXtudio's GitHub Packages (nuget.config: lextudio_github), with this job's token, as in release-odaddin.yml.
+  packages: read
+
+env:
+  ASSET: ICSharpCode.StrideGameStudio.odaddin
+  OPENDEVELOP_REPOSITORY: lextudio/OpenDevelop
+  OPENDEVELOP_TAG: ${{ inputs.opendevelop_tag || 'v5.9.1' }}
+  STRIDE_TAG: ${{ inputs.tag || 'v0.1.0' }}
+
+jobs:
+  test:
+    name: Install the released add-in (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            runner: windows-2025
+            opendevelop_asset: OpenDevelop-win.7z
+          - name: linux-x64
+            runner: ubuntu-24.04
+            opendevelop_asset: OpenDevelop-linux-x64.tar.xz
+    steps:
+      # The game the test opens, and the test project itself. The files above the test project are listed too: its PackageReference carries no
+      # version (sources/Directory.Packages.props), global.json pins the SDK and nuget.config names the package sources. A leading slash anchors a
+      # pattern at the repository root (non-cone mode).
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          sparse-checkout: |
+            /.github
+            /global.json
+            /nuget.config
+            /sources/Directory.Build.props
+            /sources/Directory.Packages.props
+            /samples/Templates/FirstPersonShooter
+            /sources/tools/Stride.OpenDevelop.AddIn.Tests
+          sparse-checkout-cone-mode: false
+
+      # The test project links OpenDevelop's own fixture sources; take the ones of the release being tested.
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.OPENDEVELOP_REPOSITORY }}
+          ref: ${{ env.OPENDEVELOP_TAG }}
+          path: opendevelop-src
+          sparse-checkout: |
+            tests/OpenDevelop.IntegrationTests
+            .github/ci
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          # 10.0: the SDK Stride's global.json pins, for the test project; 11.0: the runtime of the OpenDevelop host.
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      - name: Prepare Linux
+        if: runner.os == 'Linux'
+        run: bash opendevelop-src/.github/ci/install-linux-prerequisites.sh --display
+
+      - name: Download the add-in release and verify its digest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'release'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $release = gh release view $env:STRIDE_TAG --repo $env:GITHUB_REPOSITORY --json isDraft,isPrerelease,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "no release $env:STRIDE_TAG in $env:GITHUB_REPOSITORY" }
+          if ($release.isDraft) { throw "$env:STRIDE_TAG is a draft" }
+          $asset = $release.assets | Where-Object { $_.name -eq $env:ASSET }
+          if (-not $asset) { throw "the release has no asset $env:ASSET" }
+          gh release download $env:STRIDE_TAG --repo $env:GITHUB_REPOSITORY --pattern $env:ASSET --dir $dir
+          if ($LASTEXITCODE -ne 0) { throw 'could not download the add-in' }
+          $file = Join-Path $dir $env:ASSET
+          $actual = 'sha256:' + (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $asset.digest) { throw "digest mismatch: release says $($asset.digest), downloaded file is $actual" }
+          "the downloaded $env:ASSET is $((Get-Item $file).Length) bytes, $actual"
+          "STRIDE_ODADDIN=$file" >> $env:GITHUB_ENV
+
+      - name: Download OpenDevelop
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'opendevelop'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          gh release download $env:OPENDEVELOP_TAG --repo $env:OPENDEVELOP_REPOSITORY --pattern '${{ matrix.opendevelop_asset }}' --dir $root
+          if ($LASTEXITCODE -ne 0) { throw 'could not download OpenDevelop' }
+          $archive = Join-Path $root '${{ matrix.opendevelop_asset }}'
+          if ($IsWindows) { 7z x $archive "-o$root" -y | Out-Null } else { tar -xf $archive -C $root }
+          if ($LASTEXITCODE -ne 0) { throw 'could not extract OpenDevelop' }
+          # The archive's top folder name is not part of any contract: find the folder that holds the host.
+          $dll = Get-ChildItem $root -Recurse -Depth 2 -Filter 'OpenDevelop.dll' | Select-Object -First 1
+          if (-not $dll) { throw "OpenDevelop.dll is not in $env:OPENDEVELOP_TAG" }
+          "OD_IT_IDE_DLL=$($dll.FullName)" >> $env:GITHUB_ENV
+          "host: $($dll.FullName)"
+
+      - name: Install the released add-in, restart, open a Stride game
+        shell: bash
+        env:
+          STRIDE_CHECKOUT_ROOT: ${{ github.workspace }}
+          # NuGet fails on a local source that does not exist (nuget.config lists a developer's synchronized OpenAvalon feed beside the checkout).
+          NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
+        run: |
+          # Relative to the workspace (the step's working directory): on Windows $GITHUB_WORKSPACE has backslashes that dirname does not split.
+          mkdir -p ../OpenDevelop/artifacts/openavalon-feed
+          cd sources/tools/Stride.OpenDevelop.AddIn.Tests
+          run=(dotnet run -c Release "-p:OpenDevelopRoot=$GITHUB_WORKSPACE/opendevelop-src/" -- -class Stride.OpenDevelop.AddIn.Tests.StrideOdaddinInstallTests -parallel none)
+          if [ "$RUNNER_OS" = Linux ]; then run=(xvfb-run -a "${run[@]}"); fi
+          set +e
+          "${run[@]}" 2>&1 | tee "$RUNNER_TEMP/test-output.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          # A skipped test is reported as a pass: this one only counts when it ran.
+          summary=$(grep -E 'Total: [0-9]+' "$RUNNER_TEMP/test-output.txt" | tail -1 || true)
+          echo "summary: $summary"
+          if ! echo "$summary" | grep -Eq 'Total: 1, Errors: 0, Failed: 0, Skipped: 0'; then
+            echo "::error::the install journey did not run to a pass: $summary"
+            exit 1
+          fi
+          exit "$status"
