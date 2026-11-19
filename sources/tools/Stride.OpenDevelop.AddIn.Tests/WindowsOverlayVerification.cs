@@ -73,15 +73,16 @@ internal static class WindowsOverlayVerification
 		string shot = Path.Combine(shotDirectory, "viewport.png");
 		// The first frames are the empty editor (grid, gizmo) while the game's assets load and its shaders compile: on a machine without a GPU
 		// that takes tens of seconds, so look until the scene shows up and judge the last capture.
-		var (distinct, dominantShare) = CapturePixels(rect, shot);
+		// The scene must also keep its materials' colours (PixelStats: blue and yellow walls, not one tint).
+		var pixels = CapturePixels(rect, shot);
 		var sceneDeadline = DateTime.UtcNow.AddSeconds(40);
-		while (!(distinct >= 200 && dominantShare < 0.90) && DateTime.UtcNow < sceneDeadline)
+		while (!SceneRendered(pixels, 200) && DateTime.UtcNow < sceneDeadline)
 		{
 			await Task.Delay(2000);
-			(distinct, dominantShare) = CapturePixels(rect, shot);
+			pixels = CapturePixels(rect, shot);
 		}
-		Assert.True(distinct >= 200 && dominantShare < 0.90,
-			$"The screen area of the viewport looks empty or flat: {distinct} distinct colours, the most common covers {dominantShare:P0}. Screenshot: {shot}\n{status}\n{ide.Output}");
+		Assert.True(SceneRendered(pixels, 200),
+			$"The screen area of the viewport is not the rendered scene: {pixels.Distinct} distinct colours, the most common covers {pixels.DominantShare:P0}, hues: {pixels.Hues} (a correct render has two distinct hues). Screenshot: {shot}\n{status}\n{ide.Output}");
 
 		// 4. Input: real OS pointer input over the overlay reaches the game (SDL receives it natively on Windows; nothing is forwarded from WPF).
 		int cx = rect.X + rect.Width / 2, cy = rect.Y + rect.Height / 2;
@@ -144,16 +145,18 @@ internal static class WindowsOverlayVerification
 		var movedRect = new Rectangle((int)finalFrame.GetProperty("x").GetDouble(), (int)finalFrame.GetProperty("y").GetDouble(), (int)finalFrame.GetProperty("w").GetDouble(), (int)finalFrame.GetProperty("h").GetDouble());
 		string shot2 = Path.Combine(shotDirectory, "viewport-after-move-resize.png");
 		// A resize recreates the swap chain and the game redraws at the new size: a slow (GPU-less) machine shows a blank surface for a while.
-		var (distinct2, share2) = CapturePixels(movedRect, shot2);
+		var pixels2 = CapturePixels(movedRect, shot2);
 		var redrawDeadline = DateTime.UtcNow.AddSeconds(40);
-		while (!(distinct2 >= 100 && share2 < 0.90) && DateTime.UtcNow < redrawDeadline)
+		while (!SceneRendered(pixels2, 100) && DateTime.UtcNow < redrawDeadline)
 		{
 			await Task.Delay(2000);
-			(distinct2, share2) = CapturePixels(movedRect, shot2);
+			pixels2 = CapturePixels(movedRect, shot2);
 		}
-		Assert.True(distinct2 >= 100 && share2 < 0.90,
-			$"After moving and resizing the host window the viewport looks empty or flat: {distinct2} distinct colours, the most common covers {share2:P0}. Screenshot: {shot2}\n{status}\n{ide.Output}");
+		Assert.True(SceneRendered(pixels2, 100),
+			$"After moving and resizing the host window the viewport is not the rendered scene: {pixels2.Distinct} distinct colours, the most common covers {pixels2.DominantShare:P0}, hues: {pixels2.Hues}. Screenshot: {shot2}\n{status}\n{ide.Output}");
 	}
+
+	static bool SceneRendered(PixelStats.Result p, int minDistinct) => p.Distinct >= minDistinct && p.DominantShare < 0.90 && p.HasDistinctHues;
 
 	static JsonElement Input(JsonElement status) => status.GetProperty("input");
 
@@ -165,23 +168,17 @@ internal static class WindowsOverlayVerification
 		mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, ax, ay, 0, UIntPtr.Zero);
 	}
 
-	/// <summary>Copies a screen rectangle to a PNG and counts distinct colours (sampled on a grid) and the share of the most common one.</summary>
-	static (int Distinct, double DominantShare) CapturePixels(Rectangle rect, string path)
+	/// <summary>Copies a screen rectangle to a PNG and analyses its pixels (sampled on a grid), see <see cref="PixelStats"/>.</summary>
+	static PixelStats.Result CapturePixels(Rectangle rect, string path)
 	{
 		using var bitmap = new Bitmap(rect.Width, rect.Height, PixelFormat.Format32bppArgb);
 		using (var g = Graphics.FromImage(bitmap))
 			g.CopyFromScreen(rect.X, rect.Y, 0, 0, rect.Size, CopyPixelOperation.SourceCopy);
 		bitmap.Save(path, ImageFormat.Png);
-		var counts = new Dictionary<int, int>();
-		int total = 0;
+		var samples = new List<int>();
 		for (int y = 0; y < rect.Height; y += 4)
 			for (int x = 0; x < rect.Width; x += 4)
-			{
-				// Quantise to 5 bits per channel so noise and dithering do not count as distinct colours.
-				int c = bitmap.GetPixel(x, y).ToArgb() & 0x00F8F8F8;
-				counts[c] = counts.GetValueOrDefault(c) + 1;
-				total++;
-			}
-		return (counts.Count, total == 0 ? 1.0 : counts.Values.Max() / (double)total);
+				samples.Add(bitmap.GetPixel(x, y).ToArgb() & 0x00FFFFFF);
+		return PixelStats.Analyse(samples);
 	}
 }
