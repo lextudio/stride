@@ -123,19 +123,23 @@ jobs:
             dotnet --version
             # One package for every desktop OS whatever machine builds it: AnyCPU assemblies, the headless editor path (SDL window pinned over the
             # WPF element - macOS through Cocoa, Windows through Win32; Stride's WinForms path cannot work here, System.Windows.Forms being
-            # LibreWinForms), and the graphics APIs staged in their own folders. No -p:StrideGraphicsApis: a Windows build defaults to Direct3D11;
-            # Direct3D12;Vulkan (Stride.Graphics.targets), and an explicit Vulkan%3BDirect3D11 built only Vulkan on the runner. StrideEditorHost picks the folder at run time.
-            [string[]]$variantFlags = @('-p:StrideEditorAnyCpu=true', '-p:StrideEditorHeadless=true')
-            dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
-              -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
-              -p:WarningLevel=0 @variantFlags -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
-              -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
-              -p:StrideAddInDeployDir="$out\" `
-              -p:OpenDevelopDistributionBuild=true `
-              -p:OpenDevelopAddinReleaseVersion=${{ steps.version.outputs.version }} `
-              -p:OpenDevelopAddinPackageDir="$pkg\" `
-              -p:ProGpuWpfCopyPackageRuntimeAssets=false
-            if ($LASTEXITCODE -ne 0) { throw "dotnet build exited with $LASTEXITCODE" }
+            # LibreWinForms), and the graphics APIs staged in their own folders. One build produces ONE API (the first of StrideGraphicsApis, which
+            # defaults to Direct3D11 on Windows; a list does not build the others - seen on the runner), so build once per API into the same deploy
+            # dir: each pass adds its Vulkan/ or Direct3D11/ folder, and the pass that sees both removes the flat root copies of the per-API
+            # assemblies (StrideAddInIsolateGraphicsApiAssemblies) before packing. StrideEditorHost picks the folder at run time.
+            foreach ($api in 'Vulkan', 'Direct3D11') {
+              dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
+                -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
+                -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideEditorHeadless=true -p:StrideGraphicsApis=$api `
+                -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
+                -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
+                -p:StrideAddInDeployDir="$out\" `
+                -p:OpenDevelopDistributionBuild=true `
+                -p:OpenDevelopAddinReleaseVersion=${{ steps.version.outputs.version }} `
+                -p:OpenDevelopAddinPackageDir="$pkg\" `
+                -p:ProGpuWpfCopyPackageRuntimeAssets=false
+              if ($LASTEXITCODE -ne 0) { throw "dotnet build ($api) exited with $LASTEXITCODE" }
+            }
           } finally { Pop-Location }
           "PACKAGE=$pkg\ICSharpCode.StrideGameStudio.odaddin" >> $env:GITHUB_ENV
 
@@ -200,7 +204,7 @@ jobs:
               # assemblies must exist ONLY in those folders: a flat root copy is what the add-in loader finds first, so its API would win on every OS.
               foreach ($api in 'Vulkan', 'Direct3D11') {
                 foreach ($assembly in 'Stride.Graphics.dll', 'Stride.Games.dll', 'Stride.Input.dll', 'Stride.Video.dll') {
-                  if ($names -notcontains "$api/$assembly") { throw "the package lacks ${api}/${assembly}: the Windows build must stage both APIs (default Stride.Graphics.targets list)" }
+                  if ($names -notcontains "$api/$assembly") { throw "the package lacks ${api}/${assembly}: the build must run once per graphics API into the same deploy dir" }
                 }
                 if ($names -notcontains "$api/runtimes/win-x64/native/avutil-59.dll") { throw "the package lacks the FFmpeg natives under $api/runtimes/win-x64/native" }
               }
