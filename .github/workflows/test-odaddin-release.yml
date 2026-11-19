@@ -30,6 +30,10 @@ on:
       linux_vulkan:
         description: 'Linux Vulkan driver: stride (the Lavapipe build Stride''s own Linux GPU tests use, Stride.Dependencies.Lavapipe) or mesa (Ubuntu''s)'
         default: 'stride'
+      windows_vulkan:
+        description: 'Diagnostic: render on Windows with Vulkan (Stride''s Lavapipe) instead of Direct3D11, to compare with Linux'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -106,6 +110,35 @@ jobs:
       - name: Install the Linux viewport check's tools
         if: runner.os == 'Linux'
         run: sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers vulkan-tools xdotool imagemagick libva2 libva-drm2 > /dev/null
+
+      # Diagnostic: Windows rendering with Vulkan through Stride's Lavapipe (as Stride's own test-windows-game.yml registers it), so a Linux
+      # rendering difference can be told apart from a Vulkan/Lavapipe one.
+      - name: Install the Vulkan runtime (Windows, Vulkan diagnostic)
+        if: runner.os == 'Windows' && inputs.windows_vulkan
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.341.1
+          install_runtime: true
+          cache: true
+          stripdown: true
+
+      - name: Register Stride's Lavapipe (Windows, Vulkan diagnostic)
+        if: runner.os == 'Windows' && inputs.windows_vulkan
+        shell: pwsh
+        run: |
+          $version = ([regex]'PackageVersion Include="Stride.Dependencies.Lavapipe" Version="([^"]+)"').Match((Get-Content sources/Directory.Packages.props -Raw)).Groups[1].Value
+          $dir = Join-Path $env:RUNNER_TEMP 'lavapipe'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/stride.dependencies.lavapipe/$version/stride.dependencies.lavapipe.$version.nupkg" -OutFile (Join-Path $dir 'lavapipe.zip')
+          Expand-Archive (Join-Path $dir 'lavapipe.zip') (Join-Path $dir 'pkg') -Force
+          $dll = Get-ChildItem (Join-Path $dir 'pkg') -Recurse -Filter vulkan_lvp.dll | Where-Object { $_.DirectoryName -match 'win-x64' } | Select-Object -First 1
+          if (-not $dll) { throw "no win-x64 vulkan_lvp.dll in Stride.Dependencies.Lavapipe $version" }
+          $icd = Join-Path $dll.DirectoryName 'lvp_icd_registered.json'
+          Set-Content $icd ('{"file_format_version":"1.0.0","ICD":{"library_path":"' + ($dll.FullName -replace '\\', '\\') + '","api_version":"1.3.0"}}')
+          New-Item -Path 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers' -Force | Out-Null
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers' -Name $icd -Value 0 -PropertyType DWord -Force | Out-Null
+          'STRIDE_GRAPHICS_API=Vulkan' >> $env:GITHUB_ENV
+          "Windows renders with Vulkan through Stride.Dependencies.Lavapipe $version ($($dll.FullName))"
 
       # Which Vulkan driver renders: by default the Lavapipe build Stride's own Linux GPU tests use and compare with their gold images
       # (test-linux-game.yml: Stride.Dependencies.Lavapipe, version pinned in sources/Directory.Packages.props), forced with VK_DRIVER_FILES as
