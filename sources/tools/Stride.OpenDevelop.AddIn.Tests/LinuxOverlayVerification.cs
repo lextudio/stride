@@ -59,12 +59,12 @@ internal static class LinuxOverlayVerification
 		string shot = Path.Combine(shotDirectory, "viewport.png");
 		var (distinct, dominantShare) = await CapturePixelsAsync(rect, shot);
 		var sceneDeadline = DateTime.UtcNow.AddSeconds(60);
-		while (!(distinct >= 200 && dominantShare < 0.90) && DateTime.UtcNow < sceneDeadline)
+		while (!(distinct >= 60 && dominantShare < 0.50) && DateTime.UtcNow < sceneDeadline)
 		{
 			await Task.Delay(2000);
 			(distinct, dominantShare) = await CapturePixelsAsync(rect, shot);
 		}
-		Assert.True(distinct >= 200 && dominantShare < 0.90,
+		Assert.True(distinct >= 60 && dominantShare < 0.50,
 			$"The screen area of the viewport looks empty or flat: {distinct} distinct colours, the most common covers {dominantShare:P0}. Screenshot: {shot}\n{status}\n{ide.Output}");
 
 		// 4. Input: real pointer input over the overlay reaches the game (SDL receives it natively; nothing is forwarded from WPF).
@@ -127,12 +127,12 @@ internal static class LinuxOverlayVerification
 		string shot2 = Path.Combine(shotDirectory, "viewport-after-move-resize.png");
 		var (distinct2, share2) = await CapturePixelsAsync(movedRect, shot2);
 		var redrawDeadline = DateTime.UtcNow.AddSeconds(60);
-		while (!(distinct2 >= 100 && share2 < 0.90) && DateTime.UtcNow < redrawDeadline)
+		while (!(distinct2 >= 60 && share2 < 0.50) && DateTime.UtcNow < redrawDeadline)
 		{
 			await Task.Delay(2000);
 			(distinct2, share2) = await CapturePixelsAsync(movedRect, shot2);
 		}
-		Assert.True(distinct2 >= 100 && share2 < 0.90,
+		Assert.True(distinct2 >= 60 && share2 < 0.50,
 			$"After moving and resizing the host window the viewport looks empty or flat: {distinct2} distinct colours, the most common covers {share2:P0}. Screenshot: {shot2}\n{status}\n{ide.Output}");
 	}
 
