@@ -31,7 +31,7 @@ Each folder carries the natives its assemblies probe beside themselves (FFmpeg f
 |---|---|---|
 | macOS (arm64) | **Works** (`StrideOdaddinInstallTests` with `STRIDE_CHECK_VIEWPORT=1`) | SDL opens its own top-level NSWindow and `CocoaOverlayInterop` pins it over the WPF element with `addChildWindow:` (a foreign NSView crashes MoltenVK); input is forwarded from WPF. |
 | Windows | **Works** (same test; on Windows it also checks placement, frames, pixels, input and following the host window) | SDL opens its own top-level HWND (Direct3D11); `Win32OverlayInterop` makes it a borderless popup OWNED by the IDE window and keeps it over the element in screen pixels, re-placing it when the host window or the layout moves (an owned popup follows its owner's z-order and minimising, not its position). SDL receives the pointer and keyboard input itself, so nothing is forwarded. |
-| Linux | **None.** The add-in loads and shows the project tree | `HeadlessGameHostView` is the fork's seam for a managed frame presenter, but nothing wires it into the add-in; frame readback crashed under MoltenVK, untested elsewhere. |
+| Linux (X11) | **Works** (same test under Xvfb with Mesa lavapipe software Vulkan, in `test-odaddin-release.yml`: placement, frames, pixels, pointer input - a click selects a block in the scene - and following the host window) | SDL opens its own top-level window (Vulkan, the package's own SDL2); `LinuxOverlayInterop` makes it borderless, SDL moves, sizes, shows and hides it over the WPF element, and libX11's `XSetTransientForHint` makes it transient for the host's X11 window (from LibreWPF's Silk window, `Native.X11`) so a window manager keeps it above the host and out of the task bar. SDL feeds the game its input natively, as on Windows. Needs `libvulkan.so.1` and a Vulkan driver, and `libva2`/`libva-drm2` for FFmpeg (a desktop has them). X11 or XWayland only: Wayland does not let a client place its own window. Not verified on a real GPU, a real window manager or multiple monitors; under lavapipe the scene renders in a green tint where Windows shows blue and yellow walls, unexplained. |
 
 Why not Stride's own Windows path (a WinForms game form shown by `GameEngineHost`)? Inside OpenDevelop `System.Windows.Forms` is LibreWinForms,
 a portable reimplementation, so the form's `Handle` is not a real HWND and DXGI refuses a swap chain on it (`E_ACCESSDENIED` in
@@ -40,7 +40,8 @@ a portable reimplementation, so the form's `Handle` is not a real HWND and DXGI 
 `StrideOdaddinInstallTests` with `STRIDE_CHECK_VIEWPORT=1` needs the sample game restored (`dotnet restore` of
 `samples/Templates/FirstPersonShooter/FirstPersonShooter/FirstPersonShooter.Game`): without `obj/project.assets.json` the engine packages
 (assets, shaders) do not load, the game faults on its first frame and the viewport is black while still reporting "running". The Windows
-checks catch that (they fail on a faulted game and on a flat screen area); the macOS check only asks for "running".
+checks catch that (they fail on a faulted game and on a flat screen area); the macOS check only asks for "running". On Linux `Xvfb` provides the screen,
+Mesa's lavapipe the Vulkan driver (`mesa-vulkan-drivers`), ImageMagick's `import` reads the pixels and `xdotool` injects the pointer and moves the host window.
 
 ## Why this matters here
 
