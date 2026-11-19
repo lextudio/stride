@@ -1,0 +1,14 @@
+Stride native libraries for macOS (osx-arm64), vendored for the OpenDevelop Stride Game Studio add-in.
+
+libstrideaudio.dylib  built from sources/engine/Stride.Audio  (sources/native, Celt/OpenAL wrapper)
+libstridevr.dylib     built from sources/engine/Stride.VirtualReality
+
+Why they are checked in: Stride builds its own native libraries for the architecture of the BUILD host
+(sources/native/Stride.Native.targets: osx-arm64 only when building on macOS). The add-in's .odaddin is
+built on a Windows runner, which cannot produce them, so the package copies these (target CopyStrideRuntimes in
+sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj), as it does for deps/MoltenVK.
+
+Provenance: built on macOS (Apple Silicon) from this repository, last change to the native sources 2f6f79b4b.
+Rebuild: on a Mac, build sources/engine/Stride.Audio and sources/engine/Stride.VirtualReality (Release) and copy
+runtimes/osx-arm64/native/{libstrideaudio,libstridevr}.dylib here; refresh them whenever sources/native or those two
+projects change.

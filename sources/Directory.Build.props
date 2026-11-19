@@ -14,7 +14,10 @@
     <!-- Editor platform split: the WinForms-backed game-form embedding (EmbeddedGameForm,
          EditorGameController's drag-drop/cursor plumbing) only compiles where WinForms is a
          real windowing stack. Building ON Windows keeps the exact upstream behavior; on any
-         other host OS the headless twins (EmbeddedGameForm.Headless.cs) take over. -->
-    <DefineConstants Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(DefineConstants);STRIDE_EDITOR_WINFORMS</DefineConstants>
+         other host OS the headless twins (EmbeddedGameForm.Headless.cs) take over. A build that must run on every
+         desktop OS whatever machine builds it (the OpenDevelop add-in's .odaddin release) passes
+         -p:StrideEditorHeadless=true to take the headless path on a Windows host too: the WinForms path
+         bakes Windows-only calls (STA threads, WinForms windows) into the assemblies. -->
+    <DefineConstants Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$(StrideEditorHeadless)' != 'true'">$(DefineConstants);STRIDE_EDITOR_WINFORMS</DefineConstants>
   </PropertyGroup>
 </Project>

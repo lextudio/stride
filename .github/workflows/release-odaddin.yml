@@ -123,7 +123,7 @@ jobs:
             dotnet --version
             dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
               -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
-              -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
+              -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideEditorHeadless=true -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
               -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
               -p:StrideAddInDeployDir="$out\" `
               -p:OpenDevelopDistributionBuild=true `
@@ -172,6 +172,29 @@ jobs:
             foreach ($rid in 'win-x64', 'linux-x64', 'osx-arm64') {
               if (-not ($names | Where-Object { $_ -like "runtimes/$rid/*" })) { throw "the package has no natives for $rid" }
             }
+            # Stride builds these two natives for the architecture of the build host, so a Windows runner cannot produce the macOS ones: the package
+            # carries the vendored copies (deps/StrideNative), under both runtimes trees the editor probes.
+            foreach ($native in 'libstrideaudio.dylib', 'libstridevr.dylib') {
+              foreach ($tree in 'runtimes', 'Vulkan/runtimes') {
+                if ($names -notcontains "$tree/osx-arm64/native/$native") { throw "the package lacks $tree/osx-arm64/native/$native" }
+              }
+            }
+            # The editor assemblies must run on every desktop OS whatever machine built them: AnyCPU (not the win-x64 pin), and the headless
+            # editor path (not the WinForms one, which bakes STA threads and WinForms windows in and fails on macOS).
+            function Read-Entry([string]$name) {
+              $entry = $zip.GetEntry($name)
+              if (-not $entry) { throw "the package lacks $name" }
+              $ms = New-Object System.IO.MemoryStream
+              $in = $entry.Open(); $in.CopyTo($ms); $in.Dispose()
+              return $ms.ToArray()
+            }
+            foreach ($assembly in 'Stride.Assets.Presentation.dll', 'Stride.Editor.dll', 'Stride.GameStudio.dll') {
+              $bytes = Read-Entry $assembly
+              $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3c) + 4)
+              if ($machine -ne 0x14c) { throw ('{0} is built for machine 0x{1:x}, not AnyCPU (0x14c)' -f $assembly, $machine) }
+            }
+            $editor = [Text.Encoding]::Latin1.GetString((Read-Entry 'Stride.Editor.dll'))
+            if (-not $editor.Contains('HeadlessGameHostView')) { throw 'Stride.Editor.dll was built with the WinForms editor path (no HeadlessGameHostView): pass -p:StrideEditorHeadless=true' }
           } finally { $zip.Dispose() }
           # GitHubReleaseSource refuses a download above 1 GiB.
           if ($size -gt 1GB) { throw "the package is $size bytes, over the 1 GiB the AddIn Manager accepts" }
