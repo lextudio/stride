@@ -16,6 +16,21 @@ namespace ICSharpCode.StrideGameStudio
 {
 	static class LibreWpfHostWindow
 	{
+		/// <summary>The host window's real HWND (Windows): the one the user sees. LibreWPF can expose both its Silk/GLFW render window and
+		/// an HwndSource proxy; prefer whichever is visible, because the overlay is owned by it and positioned against the screen.</summary>
+		public static bool TryGetWin32Hwnd(Window window, out IntPtr hwnd)
+		{
+			hwnd = IntPtr.Zero;
+			IntPtr silk = IntPtr.Zero;
+			if (ProGpuWpfDiagnostics.TryGetWindowHost(window, out var host) && host?.SilkWindow?.Native?.Win32 is { } win32)
+				silk = win32.Hwnd;
+			IntPtr proxy = IntPtr.Zero;
+			try { proxy = new System.Windows.Interop.WindowInteropHelper(window).Handle; } catch (InvalidOperationException) { }
+			if (silk != IntPtr.Zero && Win32OverlayInterop.IsVisible(silk)) hwnd = silk;
+			else if (proxy != IntPtr.Zero && Win32OverlayInterop.IsVisible(proxy)) hwnd = proxy;
+			else hwnd = silk != IntPtr.Zero ? silk : proxy;
+			return hwnd != IntPtr.Zero;
+		}
 		public static bool TryGetCocoaNsWindow(Window window, out IntPtr nsWindow)
 		{
 			nsWindow = IntPtr.Zero;

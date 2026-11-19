@@ -188,9 +188,9 @@ namespace ICSharpCode.StrideGameStudio
 				await StartWithEditorHostAsync();
 				return;
 			}
-			if (!OperatingSystem.IsMacOS())
+			if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows())
 			{
-				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] windowed overlay is macOS-only (or Windows with the WinForms editor assemblies); no viewport on this platform yet.");
+				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] windowed overlay is macOS and Windows only (Windows also with the WinForms editor assemblies); no viewport on this platform yet.");
 				return;
 			}
 
@@ -217,15 +217,15 @@ namespace ICSharpCode.StrideGameStudio
 
 				sdlWindow = (SdlWindow)controller.SdlWindow
 					?? throw new InvalidOperationException("EditorGameController.StartGame() did not produce an SdlWindow.");
-				sdlNsWindow = SdlNativeWindow.GetCocoaNsWindow(sdlWindow);
+				sdlNsWindow = OverlayNative.GetNativeWindow(sdlWindow);
 				if (sdlNsWindow == IntPtr.Zero)
-					throw new InvalidOperationException("SDL_GetWindowWMInfo returned no Cocoa NSWindow handle.");
-				CocoaOverlayInterop.MakeBorderless(sdlNsWindow);
+					throw new InvalidOperationException("SDL_GetWindowWMInfo returned no native window handle (Cocoa NSWindow on macOS, Win32 HWND on Windows).");
+				OverlayNative.MakeBorderless(sdlNsWindow);
 				// The overlay presents frames; it does not take input. Clicks must fall through it to
 				// the WPF element underneath, which forwards them via AttachInputForwarding - the
 				// native window swallows mouse-down without producing an SDL button event (see the
 				// technote's input section), so leaving it in the click path loses input entirely.
-				CocoaOverlayInterop.SetIgnoresMouseEvents(sdlNsWindow, true);
+				OverlayNative.SetIgnoresMouseEvents(sdlNsWindow, true);
 
 				// The editor game starts out treated as hidden, and EditorServiceGame.Update throttles
 				// itself to an occasional frame in that state - which stops GameSystems, and therefore
@@ -235,7 +235,10 @@ namespace ICSharpCode.StrideGameStudio
 				controller.OnShowGame();
 
 				AttachOverlay();
-				AttachInputForwarding();
+				// A Windows overlay is a real HWND in the click path and SDL feeds the game its input natively, so only macOS (where the
+				// overlay is click-through) forwards the WPF element's input.
+				if (OperatingSystem.IsMacOS())
+					AttachInputForwarding();
 				// Size the SDL window (and therefore the engine's backbuffer) to this element up
 				// front, so even the first presented frame isn't the distorted default 4:3.
 				var iw = ActualWidth > 0 ? (int)ActualWidth : 640;
@@ -395,16 +398,49 @@ namespace ICSharpCode.StrideGameStudio
 				return;
 			}
 
-			if (!LibreWpfHostWindow.TryGetCocoaNsWindow(hostWindow, out hostNsWindow) || hostNsWindow == IntPtr.Zero)
+			var hostResolved = OperatingSystem.IsWindows()
+				? LibreWpfHostWindow.TryGetWin32Hwnd(hostWindow, out hostNsWindow)
+				: LibreWpfHostWindow.TryGetCocoaNsWindow(hostWindow, out hostNsWindow);
+			if (!hostResolved || hostNsWindow == IntPtr.Zero)
 			{
-				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] could not resolve the host window's native NSWindow; overlay not attached.");
+				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] could not resolve the host window's native window (NSWindow or HWND); overlay not attached.");
 				return;
 			}
 
-			CocoaOverlayInterop.AddChildWindow(hostNsWindow, sdlNsWindow);
+			OverlayNative.AddChildWindow(hostNsWindow, sdlNsWindow);
 			attached = true;
 			Reposition();
+			if (OperatingSystem.IsWindows())
+				TrackHostWindow(hostWindow);
 		}
+
+		// Windows: the overlay is an OWNED popup, which follows its owner's z-order, minimising and hiding but not its position (a macOS child
+		// window moves with its parent). So re-place it whenever the host window moves, resizes or changes state, and whenever layout may have moved
+		// the element without resizing it (a docked pane shifting, a splitter drag elsewhere); Reposition does nothing when the rectangle is unchanged.
+		Window trackedWindow;
+		Rect lastOverlayRect;
+
+		void TrackHostWindow(Window window)
+		{
+			trackedWindow = window;
+			window.LocationChanged += OnHostWindowChanged;
+			window.SizeChanged += OnHostWindowChanged;
+			window.StateChanged += OnHostWindowChanged;
+			LayoutUpdated += OnHostWindowChanged;
+		}
+
+		void UntrackHostWindow()
+		{
+			LayoutUpdated -= OnHostWindowChanged;
+			if (trackedWindow == null)
+				return;
+			trackedWindow.LocationChanged -= OnHostWindowChanged;
+			trackedWindow.SizeChanged -= OnHostWindowChanged;
+			trackedWindow.StateChanged -= OnHostWindowChanged;
+			trackedWindow = null;
+		}
+
+		void OnHostWindowChanged(object sender, EventArgs e) => Reposition();
 
 		void Reposition()
 		{
@@ -412,7 +448,8 @@ namespace ICSharpCode.StrideGameStudio
 				return;
 			if (!IsVisible || ActualWidth <= 0 || ActualHeight <= 0)
 			{
-				CocoaOverlayInterop.OrderOut(sdlNsWindow);
+				OverlayNative.OrderOut(sdlNsWindow);
+				lastOverlayRect = default;
 				return;
 			}
 
@@ -427,6 +464,31 @@ namespace ICSharpCode.StrideGameStudio
 			var w = ActualWidth;
 			var h = ActualHeight;
 
+			if (OperatingSystem.IsWindows())
+			{
+				// Screen pixels, top-left origin, taken from the element's own corners so the result does not depend on how this WPF
+				// implementation scales DIPs: PointToScreen already answers in screen space.
+				var tl = PointToScreen(new Point(0, 0));
+				var br = PointToScreen(new Point(w, h));
+				var pw = (int)Math.Round(br.X - tl.X);
+				var ph = (int)Math.Round(br.Y - tl.Y);
+				if (pw <= 0 || ph <= 0 || hostWindow.WindowState == WindowState.Minimized)
+					return;
+				var placed = new Rect(Math.Round(tl.X), Math.Round(tl.Y), pw, ph);
+				if (placed == lastOverlayRect)
+					return;
+				lastOverlayRect = placed;
+				Win32OverlayInterop.SetScreenRect(sdlNsWindow, (int)Math.Round(tl.X), (int)Math.Round(tl.Y), pw, ph);
+				OverlayNative.OrderFront(sdlNsWindow);
+				if (sdlWindow != null)
+				{
+					try { sdlWindow.ClientSize = new Stride.Core.Mathematics.Size2(pw, ph); }
+					catch (Exception ex) { ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] SDL window resize failed: " + ex.Message); }
+				}
+				controller?.ResizeGame(pw, ph);
+				return;
+			}
+
 			var content = CocoaOverlayInterop.GetContentViewScreenRect(hostNsWindow);
 			if (content.W <= 0 || content.H <= 0)
 				return;
@@ -434,7 +496,7 @@ namespace ICSharpCode.StrideGameStudio
 			var screenY = content.Y + (content.H - offsetY - h);
 
 			CocoaOverlayInterop.SetFrame(sdlNsWindow, screenX, screenY, w, h);
-			CocoaOverlayInterop.OrderFront(sdlNsWindow);
+			OverlayNative.OrderFront(sdlNsWindow);
 			// Tell the ENGINE the window is now w x h (via SDL_SetWindowSize) so its own
 			// ProcessClientSizeChanged path resizes the presenter backbuffer - the natural path
 			// that keeps the rendered frame's aspect ratio matching the overlay. Cocoa SetFrame
@@ -586,10 +648,11 @@ namespace ICSharpCode.StrideGameStudio
 				hostVisual = null;
 			}
 			if (hostNsWindow != IntPtr.Zero && sdlNsWindow != IntPtr.Zero)
-				CocoaOverlayInterop.RemoveChildWindow(hostNsWindow, sdlNsWindow);
+				OverlayNative.RemoveChildWindow(hostNsWindow, sdlNsWindow);
 			if (sdlNsWindow != IntPtr.Zero)
-				CocoaOverlayInterop.OrderOut(sdlNsWindow);
+				OverlayNative.OrderOut(sdlNsWindow);
 
+			UntrackHostWindow();
 			MouseMove -= OnForwardMouseMove;
 			MouseDown -= OnForwardMouseDown;
 			MouseUp -= OnForwardMouseUp;
@@ -621,9 +684,9 @@ namespace ICSharpCode.StrideGameStudio
 			// Show() through SDL, not just Cocoa: SDL gates input routing on its own shown flag, which
 			// orderFront: alone leaves untouched.
 			sdlWindow?.Show();
-			CocoaOverlayInterop.OrderFront(sdlNsWindow);
-			CocoaOverlayInterop.MakeKey(sdlNsWindow);
-			CocoaOverlayInterop.SetIgnoresMouseEvents(sdlNsWindow, true);
+			OverlayNative.OrderFront(sdlNsWindow);
+			OverlayNative.MakeKey(sdlNsWindow);
+			OverlayNative.SetIgnoresMouseEvents(sdlNsWindow, true);
 		}
 
 		/// <summary>
@@ -715,9 +778,9 @@ namespace ICSharpCode.StrideGameStudio
 		{
 			if (sdlNsWindow == IntPtr.Zero)
 				return;
-			CocoaOverlayInterop.MakeTitled(sdlNsWindow);
-			CocoaOverlayInterop.OrderFront(sdlNsWindow);
-			CocoaOverlayInterop.MakeKey(sdlNsWindow);
+			OverlayNative.MakeTitled(sdlNsWindow);
+			OverlayNative.OrderFront(sdlNsWindow);
+			OverlayNative.MakeKey(sdlNsWindow);
 		}
 
 		/// <summary>
@@ -730,10 +793,10 @@ namespace ICSharpCode.StrideGameStudio
 		{
 			if (hostNsWindow == IntPtr.Zero || sdlNsWindow == IntPtr.Zero)
 				return;
-			CocoaOverlayInterop.RemoveChildWindow(hostNsWindow, sdlNsWindow);
+			OverlayNative.RemoveChildWindow(hostNsWindow, sdlNsWindow);
 			attached = false;
-			CocoaOverlayInterop.OrderFront(sdlNsWindow);
-			CocoaOverlayInterop.MakeKey(sdlNsWindow);
+			OverlayNative.OrderFront(sdlNsWindow);
+			OverlayNative.MakeKey(sdlNsWindow);
 		}
 
 		/// <summary>
@@ -744,11 +807,11 @@ namespace ICSharpCode.StrideGameStudio
 		internal string DescribeForDevFlow()
 		{
 			var frame = sdlNsWindow != IntPtr.Zero
-				? CocoaOverlayInterop.GetFrame(sdlNsWindow)
+				? OverlayNative.GetFrame(sdlNsWindow)
 				: default;
-			var isKey = sdlNsWindow != IntPtr.Zero && CocoaOverlayInterop.IsKeyWindow(sdlNsWindow);
-			var isMain = sdlNsWindow != IntPtr.Zero && CocoaOverlayInterop.IsMainWindow(sdlNsWindow);
-			var ignoresMouse = sdlNsWindow != IntPtr.Zero && CocoaOverlayInterop.GetIgnoresMouseEvents(sdlNsWindow);
+			var isKey = sdlNsWindow != IntPtr.Zero && OverlayNative.IsKeyWindow(sdlNsWindow);
+			var isMain = sdlNsWindow != IntPtr.Zero && OverlayNative.IsMainWindow(sdlNsWindow);
+			var ignoresMouse = sdlNsWindow != IntPtr.Zero && OverlayNative.GetIgnoresMouseEvents(sdlNsWindow);
 			// Who does the window server say owns the overlay's centre point? If this is not our own
 			// window number, clicks there are going somewhere else no matter what the z-order looks like.
 			// What SDL itself believes about focus, as opposed to what Cocoa reports: SDL routes key
@@ -760,10 +823,10 @@ namespace ICSharpCode.StrideGameStudio
 			// through SDL's Show() - so SDL can still consider it hidden, and SDL does not route
 			// input to windows it thinks are not shown.
 			var sdlVisible = sdlWindow?.Visible ?? false;
-			var myNum = sdlNsWindow != IntPtr.Zero ? CocoaOverlayInterop.GetWindowNumber(sdlNsWindow) : 0;
-			var hostNum = hostNsWindow != IntPtr.Zero ? CocoaOverlayInterop.GetWindowNumber(hostNsWindow) : 0;
+			var myNum = sdlNsWindow != IntPtr.Zero ? OverlayNative.GetWindowNumber(sdlNsWindow) : 0;
+			var hostNum = hostNsWindow != IntPtr.Zero ? OverlayNative.GetWindowNumber(hostNsWindow) : 0;
 			var numAtCentre = frame.W > 0
-				? CocoaOverlayInterop.WindowNumberAtPoint(frame.X + frame.W / 2, frame.Y + frame.H / 2)
+				? OverlayNative.WindowNumberAtPoint(frame.X + frame.W / 2, frame.Y + frame.H / 2)
 				: 0;
 
 			// The `frame` above is the SDL overlay's Cocoa frame, whose origin is the BOTTOM-left of the

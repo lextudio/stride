@@ -131,9 +131,24 @@ namespace ICSharpCode.StrideGameStudio
 				}
 			};
 
+			// ONE package serves every OS, so the graphics API is chosen at run time, by Stride's own rule (GraphicsApiSelector): an explicit
+			// STRIDE_GRAPHICS_API, else Direct3D11 on Windows and Vulkan elsewhere (macOS can only render with Vulkan/MoltenVK). The package stages
+			// each API's graphics-dependent assemblies in a folder of that name (Direct3D11/, Vulkan/); the one chosen here is searched first, the
+			// flat root (assemblies that do not depend on the API) next, then any other staged API. A package that stages only one API (the
+			// earlier Vulkan-only release) just uses that one.
+			var stagedApis = new[] { "Direct3D11", "Direct3D12", "Vulkan" }
+				.Where(api => File.Exists(Path.Combine(addinDir ?? "", api, "Stride.Graphics.dll")))
+				.ToArray();
+			var wantedApi = new[] { "Direct3D11", "Direct3D12", "Vulkan" }
+				.FirstOrDefault(api => api.Equals(Environment.GetEnvironmentVariable("STRIDE_GRAPHICS_API")?.Trim(), StringComparison.OrdinalIgnoreCase))
+				?? (OperatingSystem.IsWindows() ? "Direct3D11" : "Vulkan");
+			var graphicsApi = stagedApis.Contains(wantedApi) ? wantedApi : stagedApis.FirstOrDefault() ?? wantedApi;
+			var assemblySubdirs = new[] { graphicsApi, "" }.Concat(stagedApis.Where(api => api != graphicsApi)).Concat(new[] { "DirectX" }).ToArray();
+			ICSharpCode.Core.LoggingService.Info("[StrideEditorHost] graphics API = " + graphicsApi + " (staged: " + string.Join(", ", stagedApis) + ")");
+
 			AssemblyLoadContext.Default.Resolving += (context, name) =>
 			{
-				foreach (var subdir in new[] { "", "Vulkan", "DirectX" })
+				foreach (var subdir in assemblySubdirs)
 				{
 					var candidate = Path.Combine(addinDir, subdir, name.Name + ".dll");
 					if (!File.Exists(candidate))
@@ -156,11 +171,16 @@ namespace ICSharpCode.StrideGameStudio
 				return null;
 			};
 
+			// The SDL2 native for this OS: the dylib next to the assemblies on macOS, the runtimes/<rid>/native copy on Windows (the package
+			// carries both, and loading the other OS's file fails with BadImageFormatException).
+			var sdlFileName = OperatingSystem.IsWindows()
+				? Path.Combine("runtimes", System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "win-arm64" : "win-x64", "native", "SDL2.dll")
+				: "libSDL2-2.0.dylib";
 			NativeLibrary.SetDllImportResolver(typeof(Silk.NET.SDL.Sdl).Assembly, (name, assembly, searchPath) =>
 			{
 				if (name.Contains("SDL", StringComparison.OrdinalIgnoreCase))
 				{
-					var candidate = Path.Combine(addinDir, "libSDL2-2.0.dylib");
+					var candidate = Path.Combine(addinDir, sdlFileName);
 					if (File.Exists(candidate))
 						return NativeLibrary.Load(candidate);
 				}
@@ -175,7 +195,7 @@ namespace ICSharpCode.StrideGameStudio
 			// process by the time Silk's loader runs its own by-name lookup.
 			try
 			{
-				var sdlPath = Path.Combine(addinDir, "libSDL2-2.0.dylib");
+				var sdlPath = Path.Combine(addinDir, sdlFileName);
 				if (File.Exists(sdlPath))
 				{
 					NativeLibrary.Load(sdlPath);
@@ -185,7 +205,7 @@ namespace ICSharpCode.StrideGameStudio
 			}
 			catch (Exception ex)
 			{
-				ICSharpCode.Core.LoggingService.Warn("[StrideEditorHost] failed to preload libSDL2-2.0.dylib: " + ex);
+				ICSharpCode.Core.LoggingService.Warn("[StrideEditorHost] failed to preload " + sdlFileName + ": " + ex);
 			}
 
 			// A window created with the Vulkan flag (Stride.Graphics.SDL.Window, used by the
@@ -203,8 +223,12 @@ namespace ICSharpCode.StrideGameStudio
 			// and since SDL reads it via plain getenv() at call time (not dyld's own env handling
 			// at process launch), setting it here with Environment.SetEnvironmentVariable, which
 			// updates the real process environment block, is picked up correctly.
+			// macOS only: the Windows overlay renders with Direct3D11 and needs no Vulkan loader hint.
 			var vulkanPath = Path.Combine(addinDir, "runtimes", "osx-arm64", "native", "libvulkan.1.dylib");
-			if (File.Exists(vulkanPath))
+			if (!OperatingSystem.IsMacOS())
+			{
+			}
+			else if (File.Exists(vulkanPath))
 			{
 				Environment.SetEnvironmentVariable("SDL_VULKAN_LIBRARY", vulkanPath);
 

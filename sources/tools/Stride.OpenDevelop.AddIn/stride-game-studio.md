@@ -17,30 +17,30 @@ yet confirmed live (DevFlow unavailable this session). Remaining: input re-plumb
 keyboard/drag into the SDL overlay) so the ~15 already-running `EditorGame*Service`
 registrations (selection, gizmos, camera, ...) actually respond to anything.
 
-## Scene viewport by operating system (as of v0.1.0, 2026-11)
+## Scene viewport by operating system (one package for every OS)
 
-The released add-in is ONE cross-platform `.odaddin`: AnyCPU assemblies, the headless editor path
-(`STRIDE_EDITOR_WINFORMS` off, see `sources/Directory.Build.props`), Vulkan, and the natives of every desktop OS under
-`runtimes/<rid>/native`. What each OS shows of the scene editor:
+The released add-in is ONE cross-platform `.odaddin`: AnyCPU assemblies, the headless editor path (`STRIDE_EDITOR_WINFORMS` off, see
+`sources/Directory.Build.props`), the natives of every desktop OS under `runtimes/<rid>/native`, and BOTH graphics APIs, each in a folder
+of its own (`Vulkan/`, `Direct3D11/`). The graphics-API-dependent assemblies (Stride.Graphics, Stride.Games, Stride.Input, Stride.Video) exist
+ONLY in those folders, never flat at the root, because the add-in loader finds a root copy first and its API would then win on every OS.
+`StrideEditorHost` picks the folder at run time by Stride's own rule (`GraphicsApiSelector`): `STRIDE_GRAPHICS_API` if set, else Direct3D11 on
+Windows and Vulkan elsewhere (macOS can only render with Vulkan/MoltenVK); a package that stages only one API just uses that one.
+Each folder carries the natives its assemblies probe beside themselves (FFmpeg for Stride.Video); Direct3D11 only the Windows ones.
 
 | OS | Scene viewport | How |
 |---|---|---|
-| macOS (arm64) | **Works** (tested by `StrideOdaddinInstallTests` with `STRIDE_CHECK_VIEWPORT=1`) | SDL opens its own top-level NSWindow and `CocoaOverlayInterop` pins it over the WPF element with `addChildWindow:` (a foreign NSView crashes MoltenVK); input is forwarded from WPF. |
-| Windows | **Not in the released package.** Implemented for the Windows variant (see below), to be verified | Stride's own Windows path, which this fork keeps: `EditorGameController` runs the game in a WinForms form and `GameEngineHost` (an HWND-reparenting WPF element, the same one Stride's own views insert with `SceneView.Content = Controller.EditorHost`) shows it. `StrideSceneEditorViewport` hosts `controller.EditorHost` as its child; no overlay and no input forwarding. It needs the editor assemblies built WITH `STRIDE_EDITOR_WINFORMS` and, normally, Direct3D11. |
+| macOS (arm64) | **Works** (`StrideOdaddinInstallTests` with `STRIDE_CHECK_VIEWPORT=1`) | SDL opens its own top-level NSWindow and `CocoaOverlayInterop` pins it over the WPF element with `addChildWindow:` (a foreign NSView crashes MoltenVK); input is forwarded from WPF. |
+| Windows | **Works** (same test; on Windows it also checks placement, frames, pixels, input and following the host window) | SDL opens its own top-level HWND (Direct3D11); `Win32OverlayInterop` makes it a borderless popup OWNED by the IDE window and keeps it over the element in screen pixels, re-placing it when the host window or the layout moves (an owned popup follows its owner's z-order and minimising, not its position). SDL receives the pointer and keyboard input itself, so nothing is forwarded. |
 | Linux | **None.** The add-in loads and shows the project tree | `HeadlessGameHostView` is the fork's seam for a managed frame presenter, but nothing wires it into the add-in; frame readback crashed under MoltenVK, untested elsewhere. |
 
-Why the release does not carry the Windows path yet: `STRIDE_EDITOR_WINFORMS`, the Vulkan/Direct3D11 choice and the win-x64
-pin are decided when the assemblies are COMPILED, from the build host's OS. The release is built on a Windows runner and
-must run on macOS, so it is built headless/AnyCPU/Vulkan, and `release-odaddin.yml` fails the build if the package
-says otherwise. `StrideSceneEditorViewport.UsesWinFormsEditor()` checks at run time which kind of editor assemblies were
-loaded (the headless build has the `HeadlessGameHostView` type, the WinForms build does not), so a package that carries the
-WinForms assemblies makes the Windows branch work without a different add-in. How to ship both in one file (two assembly
-sets picked at load time, or turning the `#if` into a run-time check) is open.
+Why not Stride's own Windows path (a WinForms game form shown by `GameEngineHost`)? Inside OpenDevelop `System.Windows.Forms` is LibreWinForms,
+a portable reimplementation, so the form's `Handle` is not a real HWND and DXGI refuses a swap chain on it (`E_ACCESSDENIED` in
+`CreateSwapChainForDesktop`). SDL creates a genuine HWND, which is what the Windows overlay relies on.
 
-Windows experiment: `gh workflow run release-odaddin.yml --ref librewpf-port -f variant=windows-experiment` builds
-the Windows editor path (WinForms host, Direct3D11) and uploads it as the artifact
-`ICSharpCode.StrideGameStudio-windows-experiment`; it never publishes. On a Windows machine run
-`StrideOdaddinInstallTests` with `STRIDE_ODADDIN` pointing at it and `STRIDE_CHECK_VIEWPORT=1`.
+`StrideOdaddinInstallTests` with `STRIDE_CHECK_VIEWPORT=1` needs the sample game restored (`dotnet restore` of
+`samples/Templates/FirstPersonShooter/FirstPersonShooter/FirstPersonShooter.Game`): without `obj/project.assets.json` the engine packages
+(assets, shaders) do not load, the game faults on its first frame and the viewport is black while still reporting "running". The Windows
+checks catch that (they fail on a faulted game and on a flat screen area); the macOS check only asks for "running".
 
 ## Why this matters here
 

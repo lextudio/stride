@@ -104,6 +104,12 @@ public sealed class StrideOdaddinInstallTests
 						return sceneStatus.TryGetProperty("running", out var r) && r.ValueKind == JsonValueKind.True;
 					}, TimeSpan.FromSeconds(OperatingSystem.IsWindows() ? 240 : 120));
 					Assert.True(running, "The scene viewport did not start in the installed add-in: " + sceneStatus + "\n" + second.Output);
+					// "Running" says the controller started. On Windows also prove the native window is placed over the element and on top, the game
+					// renders frames, real pixels are on screen there and real OS pointer input reaches the game.
+					if (OperatingSystem.IsWindows())
+						await WindowsOverlayVerification.VerifyAsync(second,
+							Environment.GetEnvironmentVariable("STRIDE_VIEWPORT_SHOT_DIR") is { Length: > 0 } shots ? shots : Path.Combine(Path.GetTempPath(), "stride-viewport-shots"),
+							(poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
 				}
 			}
 		}

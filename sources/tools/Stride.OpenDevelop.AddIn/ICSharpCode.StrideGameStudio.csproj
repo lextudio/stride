@@ -263,6 +263,14 @@
          (FFmpegUtils's owner type) lives in the "Vulkan/" per-graphics-API subfolder, not this
          addin's own root, so it needs its own copy of the runtimes tree placed there too. -->
     <Copy SourceFiles="@(StrideRt)" DestinationFiles="@(StrideRt->'$(OutputPath)Vulkan\runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <!-- The same for every other graphics API the package stages: one package serves every OS and StrideEditorHost picks the API folder at run
+         time (Direct3D11 on Windows), so the assemblies loaded from Direct3D11/ look for their natives (FFmpeg for Stride.Video) beside
+         themselves exactly as the Vulkan ones do. Only the Windows natives: Direct3D11 is only ever selected on Windows, so macOS and Linux
+         natives there would only add weight (about 50 MB). -->
+    <ItemGroup>
+      <_StrideRtWindows Include="@(StrideRt)" Condition="$([System.String]::new('%(RecursiveDir)').StartsWith('win-'))" />
+    </ItemGroup>
+    <Copy Condition="Exists('$(OutputPath)Direct3D11')" SourceFiles="@(_StrideRtWindows)" DestinationFiles="@(_StrideRtWindows->'$(OutputPath)Direct3D11\runtimes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(NativeSdl)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
     <!-- MoltenVK for the macOS scene viewport is vendored in deps/. Stride.Graphics selects it by the TARGET platform,
          which on a Windows or Linux build host is not macOS, so the runtimes trees above lack it there and a package built
@@ -318,6 +326,19 @@
        keep the checkout's sources/ layout (the .sdpkg files name template folders by relative path, for example
        ../../data/StridePackage/Templates/Core), under StrideSource beside the add-in; StrideEditorHost points
        STRIDE_SOURCE_ROOT at it. Code and build output are not needed there. -->
+  <!-- One package serves every OS, so the graphics API is picked at run time (StrideEditorHost's resolver: Direct3D11/ on Windows, Vulkan/ elsewhere).
+       The build also leaves a flat copy of the graphics-API-dependent assemblies (Stride.Graphics.dll, Stride.Games.dll, ...) at the root, and a
+       root copy is what the add-in loader finds first - so the API of whichever build wrote it would win on every OS (a Vulkan root on Windows made
+       the SDL window ask for a Vulkan surface, which a Direct3D machine without Vulkan cannot give). Remove the root copy of every assembly
+       that a staged API folder carries, leaving the API-independent assemblies at the root. -->
+  <Target Name="StrideAddInIsolateGraphicsApiAssemblies" AfterTargets="Build" BeforeTargets="PackOdAddin" Condition="'$(OpenDevelopDistributionBuild)' == 'true' And Exists('$(OutputPath)Vulkan') And Exists('$(OutputPath)Direct3D11')">
+    <ItemGroup>
+      <_ApiAssembly Include="$(OutputPath)Vulkan\*.dll;$(OutputPath)Direct3D11\*.dll;$(OutputPath)Vulkan\*.pdb;$(OutputPath)Direct3D11\*.pdb" />
+      <_ApiRootCopy Include="@(_ApiAssembly->'$(OutputPath)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Message Importance="high" Text="Isolating graphics-API assemblies: removing the root copies of @(_ApiAssembly->Count()) per-API files (Delete skips those with no root copy)" />
+    <Delete Files="@(_ApiRootCopy)" />
+  </Target>
   <Target Name="StrideAddInShipSourceTree" AfterTargets="Build" Condition="'$(OpenDevelopDistributionBuild)' == 'true'">
     <PropertyGroup>
       <_StrideSourceRoot>$(StrideRoot)</_StrideSourceRoot>

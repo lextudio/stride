@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
+    <PackageReference Include="System.Drawing.Common" />
     <Compile Include="$(OpenDevelopRoot)tests/OpenDevelop.IntegrationTests/OpenDevelopAppFixture.cs" Link="OpenDevelopAppFixture.cs" />
     <!-- The fixture's public members are typed by RuntimeCell; the OpenDevelop test project gets it
          from a sibling file, so an external project that links only the fixture must link this too. -->

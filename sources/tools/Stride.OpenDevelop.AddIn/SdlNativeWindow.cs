@@ -28,5 +28,22 @@ namespace ICSharpCode.StrideGameStudio
 
 			return (IntPtr)wmInfo.Info.Cocoa.Window;
 		}
+
+		/// <summary>The real Win32 HWND SDL created for a Stride SDL window (Windows).</summary>
+		public static unsafe IntPtr GetWin32Hwnd(SdlWindow window)
+		{
+			var sdl = SdlWindow.SDL;
+			var wmInfo = new SysWMInfo();
+			sdl.GetVersion(ref wmInfo.Version);
+
+			var sdlWin = (Silk.NET.SDL.Window*)window.SdlHandle;
+			if (!sdl.GetWindowWMInfo(sdlWin, &wmInfo))
+			{
+				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] SDL_GetWindowWMInfo failed: " + sdl.GetErrorS());
+				return IntPtr.Zero;
+			}
+
+			return (IntPtr)wmInfo.Info.Win.Hwnd;
+		}
 	}
 }
