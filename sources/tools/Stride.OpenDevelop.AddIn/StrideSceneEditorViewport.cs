@@ -47,6 +47,9 @@ namespace ICSharpCode.StrideGameStudio
 		internal static StrideSceneEditorViewport Current { get; private set; }
 		bool attached;
 		bool running;
+		// Windows with the WinForms editor assemblies: the element Stride's own views insert to show the game
+		// (controller.EditorHost, a GameEngineHost that reparents the game form's HWND), hosted as this element's child.
+		FrameworkElement hostVisual;
 		// Button state is sampled from outside on a request boundary, but a synthetic click can be
 		// pressed and released well inside one frame, so polling DownButtons always reads 0 and looks
 		// identical to "the event never arrived". Latch the per-frame edges instead.
@@ -115,13 +118,79 @@ namespace ICSharpCode.StrideGameStudio
 		protected override void OnRender(DrawingContext drawingContext)
 			=> drawingContext.DrawRectangle(background, null, new Rect(RenderSize));
 
+		/// <summary>
+		/// True when the editor assemblies were built with STRIDE_EDITOR_WINFORMS, which is Stride's own Windows path: the game runs in a
+		/// WinForms form on its own thread and a GameEngineHost shows it. The headless twin (HeadlessGameHostView) exists only in the
+		/// other build, so its absence says which one this process loaded; a runtime check, because the add-in ships either variant.
+		/// </summary>
+		static bool UsesWinFormsEditor()
+			=> typeof(Stride.Editor.Engine.EmbeddedGameForm).Assembly.GetType("Stride.Editor.Engine.HeadlessGameHostView") == null;
+
+		/// <summary>
+		/// Windows: no overlay window and no input forwarding. Stride's own editor does this for its views (EntityHierarchyEditorView:
+		/// <c>SceneView.Content = Controller.EditorHost</c>), and the HWND host takes pointer and keyboard input itself.
+		/// </summary>
+		async System.Threading.Tasks.Task StartWithEditorHostAsync()
+		{
+			try
+			{
+				editor = editorFactory();
+				controller = editor.Controller;
+				// Initialize() starts the game (a WinForms form on its own STA thread) and, on this thread, creates the GameEngineHost.
+				if (!await editor.Initialize())
+					throw new InvalidOperationException("EditorViewModel.Initialize() reported failure.");
+				var host = controller.EditorHost
+					?? throw new InvalidOperationException("The editor game controller has no EditorHost after Initialize().");
+				hostVisual = host.Visual;
+				AddLogicalChild(hostVisual);
+				AddVisualChild(hostVisual);
+				InvalidateMeasure();
+				attached = true;
+				// The editor game is treated as hidden until its tab is shown; a hidden one throttles itself to an occasional frame.
+				controller.OnShowGame();
+				running = true;
+				Current = this;
+			}
+			catch (Exception ex)
+			{
+				ICSharpCode.Core.LoggingService.Error("[StrideSceneEditorViewport] failed to start (editor host): " + ex);
+				Teardown();
+			}
+		}
+
+		protected override int VisualChildrenCount => hostVisual != null ? 1 : 0;
+
+		protected override Visual GetVisualChild(int index)
+			=> hostVisual != null && index == 0 ? hostVisual : throw new ArgumentOutOfRangeException(nameof(index));
+
+		protected override Size MeasureOverride(Size availableSize)
+		{
+			if (hostVisual == null)
+				return base.MeasureOverride(availableSize);
+			hostVisual.Measure(availableSize);
+			return new Size(
+				double.IsInfinity(availableSize.Width) ? hostVisual.DesiredSize.Width : availableSize.Width,
+				double.IsInfinity(availableSize.Height) ? hostVisual.DesiredSize.Height : availableSize.Height);
+		}
+
+		protected override Size ArrangeOverride(Size finalSize)
+		{
+			hostVisual?.Arrange(new Rect(finalSize));
+			return finalSize;
+		}
+
 		async void OnLoaded(object sender, RoutedEventArgs e)
 		{
 			if (running)
 				return;
+			if (OperatingSystem.IsWindows() && UsesWinFormsEditor())
+			{
+				await StartWithEditorHostAsync();
+				return;
+			}
 			if (!OperatingSystem.IsMacOS())
 			{
-				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] windowed overlay is macOS-only; no viewport on this platform yet.");
+				ICSharpCode.Core.LoggingService.Warn("[StrideSceneEditorViewport] windowed overlay is macOS-only (or Windows with the WinForms editor assemblies); no viewport on this platform yet.");
 				return;
 			}
 
@@ -510,6 +579,12 @@ namespace ICSharpCode.StrideGameStudio
 			if (ReferenceEquals(Current, this))
 				Current = null;
 			attached = false;
+			if (hostVisual != null)
+			{
+				RemoveVisualChild(hostVisual);
+				RemoveLogicalChild(hostVisual);
+				hostVisual = null;
+			}
 			if (hostNsWindow != IntPtr.Zero && sdlNsWindow != IntPtr.Zero)
 				CocoaOverlayInterop.RemoveChildWindow(hostNsWindow, sdlNsWindow);
 			if (sdlNsWindow != IntPtr.Zero)

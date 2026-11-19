@@ -17,6 +17,31 @@ yet confirmed live (DevFlow unavailable this session). Remaining: input re-plumb
 keyboard/drag into the SDL overlay) so the ~15 already-running `EditorGame*Service`
 registrations (selection, gizmos, camera, ...) actually respond to anything.
 
+## Scene viewport by operating system (as of v0.1.0, 2026-11)
+
+The released add-in is ONE cross-platform `.odaddin`: AnyCPU assemblies, the headless editor path
+(`STRIDE_EDITOR_WINFORMS` off, see `sources/Directory.Build.props`), Vulkan, and the natives of every desktop OS under
+`runtimes/<rid>/native`. What each OS shows of the scene editor:
+
+| OS | Scene viewport | How |
+|---|---|---|
+| macOS (arm64) | **Works** (tested by `StrideOdaddinInstallTests` with `STRIDE_CHECK_VIEWPORT=1`) | SDL opens its own top-level NSWindow and `CocoaOverlayInterop` pins it over the WPF element with `addChildWindow:` (a foreign NSView crashes MoltenVK); input is forwarded from WPF. |
+| Windows | **Not in the released package.** Implemented for the Windows variant (see below), to be verified | Stride's own Windows path, which this fork keeps: `EditorGameController` runs the game in a WinForms form and `GameEngineHost` (an HWND-reparenting WPF element, the same one Stride's own views insert with `SceneView.Content = Controller.EditorHost`) shows it. `StrideSceneEditorViewport` hosts `controller.EditorHost` as its child; no overlay and no input forwarding. It needs the editor assemblies built WITH `STRIDE_EDITOR_WINFORMS` and, normally, Direct3D11. |
+| Linux | **None.** The add-in loads and shows the project tree | `HeadlessGameHostView` is the fork's seam for a managed frame presenter, but nothing wires it into the add-in; frame readback crashed under MoltenVK, untested elsewhere. |
+
+Why the release does not carry the Windows path yet: `STRIDE_EDITOR_WINFORMS`, the Vulkan/Direct3D11 choice and the win-x64
+pin are decided when the assemblies are COMPILED, from the build host's OS. The release is built on a Windows runner and
+must run on macOS, so it is built headless/AnyCPU/Vulkan, and `release-odaddin.yml` fails the build if the package
+says otherwise. `StrideSceneEditorViewport.UsesWinFormsEditor()` checks at run time which kind of editor assemblies were
+loaded (the headless build has the `HeadlessGameHostView` type, the WinForms build does not), so a package that carries the
+WinForms assemblies makes the Windows branch work without a different add-in. How to ship both in one file (two assembly
+sets picked at load time, or turning the `#if` into a run-time check) is open.
+
+Windows experiment: `gh workflow run release-odaddin.yml --ref librewpf-port -f variant=windows-experiment` builds
+the Windows editor path (WinForms host, Direct3D11) and uploads it as the artifact
+`ICSharpCode.StrideGameStudio-windows-experiment`; it never publishes. On a Windows machine run
+`StrideOdaddinInstallTests` with `STRIDE_ODADDIN` pointing at it and `STRIDE_CHECK_VIEWPORT=1`.
+
 ## Why this matters here
 
 Upstream's stated path to a Linux Game Studio is:

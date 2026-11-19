@@ -26,6 +26,11 @@ on:
       opendevelop_tag:
         description: 'OpenDevelop release to build against'
         default: 'v5.9.1'
+      variant:
+        description: 'cross-platform (the release) or windows-experiment (Stride''s own Windows editor path, WinForms host + Direct3D11; never published)'
+        type: choice
+        options: [cross-platform, windows-experiment]
+        default: cross-platform
 
 permissions:
   contents: write
@@ -38,6 +43,8 @@ concurrency:
 
 env:
   OPENDEVELOP_REPOSITORY: lextudio/OpenDevelop
+  # A tag or a push is always the cross-platform release build; only a manual run can ask for the experiment.
+  VARIANT: ${{ inputs.variant || 'cross-platform' }}
   # The release the add-in is built against; the SharpDevelop dependency range in the manifest (5.9) must cover its version.
   OPENDEVELOP_TAG: ${{ inputs.opendevelop_tag || vars.OPENDEVELOP_TAG || 'v5.9.1' }}
   # NuGet reads this conventional variable without writing the ephemeral token into any config file (see nuget.config: lextudio_github).
@@ -121,9 +128,13 @@ jobs:
           Push-Location $work
           try {
             dotnet --version
+            # cross-platform: AnyCPU assemblies, the headless editor path and Vulkan, so one package runs on every desktop OS whatever machine builds it.
+            # windows-experiment: Stride's own Windows editor path (WinForms game form + GameEngineHost) with the build host's default Direct3D11; it
+            # only works on Windows and is for trying the viewport there.
+            $variantFlags = if ($env:VARIANT -eq 'cross-platform') { @('-p:StrideEditorAnyCpu=true', '-p:StrideEditorHeadless=true', '-p:StrideGraphicsApis=Vulkan') } else { @('-p:StrideEditorAnyCpu=true') }
             dotnet build "$env:GITHUB_WORKSPACE/sources/tools/Stride.OpenDevelop.AddIn/ICSharpCode.StrideGameStudio.csproj" `
               -c Release -t:PackOdAddin --disable-build-servers -nr:false -v:m `
-              -p:WarningLevel=0 -p:StrideEditorAnyCpu=true -p:StrideEditorHeadless=true -p:StrideGraphicsApis=Vulkan -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
+              -p:WarningLevel=0 @variantFlags -p:StrideSkipAutoPack=true -p:StrideSkipUnitTests=true `
               -p:OpenDevelopHostBin="$env:OPENDEVELOP_HOST" `
               -p:StrideAddInDeployDir="$out\" `
               -p:OpenDevelopDistributionBuild=true `
@@ -172,19 +183,6 @@ jobs:
             foreach ($rid in 'win-x64', 'linux-x64', 'osx-arm64') {
               if (-not ($names | Where-Object { $_ -like "runtimes/$rid/*" })) { throw "the package has no natives for $rid" }
             }
-            # Stride builds these two natives for the architecture of the build host, so a Windows runner cannot produce the macOS ones: the package
-            # carries the vendored copies (deps/StrideNative), under both runtimes trees the editor probes.
-            foreach ($native in 'libstrideaudio.dylib', 'libstridevr.dylib') {
-              foreach ($tree in 'runtimes', 'Vulkan/runtimes') {
-                if ($names -notcontains "$tree/osx-arm64/native/$native") { throw "the package lacks $tree/osx-arm64/native/$native" }
-              }
-            }
-            # The editor assemblies must run on every desktop OS whatever machine built them: AnyCPU (not the win-x64 pin), and the headless
-            # editor path (not the WinForms one, which bakes STA threads and WinForms windows in and fails on macOS).
-            # Stride picks its graphics API by the build host (Direct3D11 on Windows), and macOS can only render with Vulkan (MoltenVK):
-            # the release is built with -p:StrideGraphicsApis=Vulkan, so the root Stride.Graphics.dll is the Vulkan one and no Direct3D11 tree rides along.
-            if ($names -notcontains 'Vulkan/Stride.Graphics.dll') { throw 'the package lacks Vulkan/Stride.Graphics.dll: build with -p:StrideGraphicsApis=Vulkan' }
-            if ($names | Where-Object { $_ -like 'Direct3D11/*' }) { throw 'the package carries a Direct3D11 build of Stride.Graphics: build with -p:StrideGraphicsApis=Vulkan' }
             function Read-Entry([string]$name) {
               $entry = $zip.GetEntry($name)
               if (-not $entry) { throw "the package lacks $name" }
@@ -192,13 +190,32 @@ jobs:
               $in = $entry.Open(); $in.CopyTo($ms); $in.Dispose()
               return $ms.ToArray()
             }
-            foreach ($assembly in 'Stride.Assets.Presentation.dll', 'Stride.Editor.dll', 'Stride.GameStudio.dll') {
-              $bytes = Read-Entry $assembly
-              $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3c) + 4)
-              if ($machine -ne 0x14c) { throw ('{0} is built for machine 0x{1:x}, not AnyCPU (0x14c)' -f $assembly, $machine) }
+            if ($env:VARIANT -eq 'cross-platform') {
+              # Stride builds these two natives for the architecture of the build host, so a Windows runner cannot produce the macOS ones: the package
+              # carries the vendored copies (deps/StrideNative), under both runtimes trees the editor probes.
+              foreach ($native in 'libstrideaudio.dylib', 'libstridevr.dylib') {
+                foreach ($tree in 'runtimes', 'Vulkan/runtimes') {
+                  if ($names -notcontains "$tree/osx-arm64/native/$native") { throw "the package lacks $tree/osx-arm64/native/$native" }
+                }
+              }
+              # The editor assemblies must run on every desktop OS whatever machine built them: AnyCPU (not the win-x64 pin), and the headless
+              # editor path (not the WinForms one, which bakes STA threads and WinForms windows in and fails on macOS).
+              # Stride picks its graphics API by the build host (Direct3D11 on Windows), and macOS can only render with Vulkan (MoltenVK):
+              # the release is built with -p:StrideGraphicsApis=Vulkan, so the root Stride.Graphics.dll is the Vulkan one and no Direct3D11 tree rides along.
+              if ($names -notcontains 'Vulkan/Stride.Graphics.dll') { throw 'the package lacks Vulkan/Stride.Graphics.dll: build with -p:StrideGraphicsApis=Vulkan' }
+              if ($names | Where-Object { $_ -like 'Direct3D11/*' }) { throw 'the package carries a Direct3D11 build of Stride.Graphics: build with -p:StrideGraphicsApis=Vulkan' }
+              foreach ($assembly in 'Stride.Assets.Presentation.dll', 'Stride.Editor.dll', 'Stride.GameStudio.dll') {
+                $bytes = Read-Entry $assembly
+                $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3c) + 4)
+                if ($machine -ne 0x14c) { throw ('{0} is built for machine 0x{1:x}, not AnyCPU (0x14c)' -f $assembly, $machine) }
+              }
+              $editor = [Text.Encoding]::Latin1.GetString((Read-Entry 'Stride.Editor.dll'))
+              if (-not $editor.Contains('HeadlessGameHostView')) { throw 'Stride.Editor.dll was built with the WinForms editor path (no HeadlessGameHostView): pass -p:StrideEditorHeadless=true' }
+            } else {
+              # The experiment is the opposite build: Stride's own Windows editor path, which has no headless host view.
+              $editor = [Text.Encoding]::Latin1.GetString((Read-Entry 'Stride.Editor.dll'))
+              if ($editor.Contains('HeadlessGameHostView')) { throw 'the windows-experiment package was built with the headless editor path' }
             }
-            $editor = [Text.Encoding]::Latin1.GetString((Read-Entry 'Stride.Editor.dll'))
-            if (-not $editor.Contains('HeadlessGameHostView')) { throw 'Stride.Editor.dll was built with the WinForms editor path (no HeadlessGameHostView): pass -p:StrideEditorHeadless=true' }
           } finally { $zip.Dispose() }
           # GitHubReleaseSource refuses a download above 1 GiB.
           if ($size -gt 1GB) { throw "the package is $size bytes, over the 1 GiB the AddIn Manager accepts" }
@@ -206,14 +223,14 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ICSharpCode.StrideGameStudio.odaddin
+          name: ${{ env.VARIANT == 'cross-platform' && 'ICSharpCode.StrideGameStudio.odaddin' || 'ICSharpCode.StrideGameStudio-windows-experiment' }}
           path: ICSharpCode.StrideGameStudio.odaddin
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
 
       - name: Publish the release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && env.VARIANT == 'cross-platform'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

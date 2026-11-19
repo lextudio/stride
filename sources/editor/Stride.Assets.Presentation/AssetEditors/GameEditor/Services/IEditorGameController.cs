@@ -7,6 +7,7 @@ using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Diagnostics;
+using Stride.Core.Presentation.Controls;
 using Stride.Core.Presentation.Services;
 using Stride.Editor.EditorGame.ContentLoader;
 using Stride.Editor.EditorGame.ViewModels;
@@ -71,6 +72,13 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// Triggers a re-evaluation of the active render stages.
         /// </summary>
         void TriggerActiveRenderStageReevaluation();
+
+        /// <summary>
+        /// The WPF element that displays the running game, for a host that embeds the editor's viewport: the
+        /// GameEngineHost (an HWND host) when the editor is built with STRIDE_EDITOR_WINFORMS, the HeadlessGameHostView
+        /// otherwise. Null until the game has started.
+        /// </summary>
+        IEmbeddedGameHostView EditorHost { get; }
 
         /// <summary>
         /// The SDL window the game renders into on macOS/Linux (null on Windows, where
