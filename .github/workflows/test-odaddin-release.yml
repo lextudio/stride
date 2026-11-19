@@ -1,10 +1,11 @@
 name: Test the released OpenDevelop add-in
 
 # Installs the PUBLISHED ICSharpCode.StrideGameStudio.odaddin (the asset of a release of this repository, downloaded from GitHub and checked
-# against the release's SHA-256 digest) into an isolated OpenDevelop release on Windows, macOS and Linux, restarts it, and checks that the
+# against the release's SHA-256 digest) into an isolated OpenDevelop release on Windows and Linux, restarts it, and checks that the
 # add-in loads and shows the assets of a Stride game: the same journey as sources/tools/Stride.OpenDevelop.AddIn.Tests/StrideOdaddinInstallTests.cs.
-# Windows and macOS also open a scene (STRIDE_CHECK_VIEWPORT=1: a real SDL window over the viewport, frames advancing, pixels on screen) and
-# upload the screenshots; Linux has no scene viewport yet, so its job only checks the install journey. The Stride game is restored first, or its
+# Windows also opens a scene (STRIDE_CHECK_VIEWPORT=1: a real SDL window over the viewport, frames advancing, pixels on screen) and
+# uploads the screenshots; Linux has no scene viewport yet, so its job only checks the install journey. macOS is not in the matrix: its
+# runners are not available to this repository (the job never gets one); it is tested on a developer machine. The Stride game is restored first, or its
 # engine assets and shaders would not load and the viewport would stay black.
 #
 # Run it by hand after a release (gh workflow run test-odaddin-release.yml --ref librewpf-port -f tag=v0.1.0), or push a change to this file:
@@ -47,10 +48,6 @@ jobs:
           - name: windows-x64
             runner: windows-2025
             opendevelop_asset: OpenDevelop-win.7z
-            viewport: '1'
-          - name: macos-arm64
-            runner: macos-15
-            opendevelop_asset: OpenDevelop-macos.dmg
             viewport: '1'
           - name: linux-x64
             runner: ubuntu-24.04
