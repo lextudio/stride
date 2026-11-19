@@ -19,7 +19,8 @@ public sealed class StrideOdaddinInstallTests
 	const string Repository = "lextudio/stride";
 	const string Identity = "ICSharpCode.StrideGameStudio";
 	const string AssetName = "ICSharpCode.StrideGameStudio.odaddin";
-	const string Tag = "v0.1.0";
+	// The tag of the package under test (the workflow passes the release being tested); the host rejects a package whose manifest version differs.
+	static readonly string Tag = Environment.GetEnvironmentVariable("STRIDE_TAG") is { Length: > 0 } tag ? tag : "v0.1.0";
 
 	[Fact]
 	public async Task GitHubReleasePackage_InstallsRestartsLoadsAndShowsTheAssetsOfAStrideGame()

@@ -150,6 +150,8 @@ jobs:
           NuGetPackageSourceCredentials_lextudio_github: Username=${{ github.actor }};Password=${{ secrets.GITHUB_TOKEN }};ValidAuthenticationTypes=Basic
         run: |
           mkdir -p ../OpenDevelop/artifacts/openavalon-feed
+          # nuget.config lists Stride's own local package folder; NuGet fails on a source that does not exist (NU1301).
+          mkdir -p bin/packages
           dotnet restore samples/Templates/FirstPersonShooter/FirstPersonShooter/FirstPersonShooter.Game/FirstPersonShooter.Game.csproj
 
       - name: Install the released add-in, restart, open a Stride game
