@@ -140,6 +140,31 @@ jobs:
           "OD_IT_IDE_DLL=$($dll.FullName)" >> $env:GITHUB_ENV
           "host: $($dll.FullName)"
 
+      # Linux has no scene viewport yet, so nothing opens the package's native libraries there. Do what a load would do first: every shared
+      # library of the package (the graphics-API folders and the root) must resolve all of its own dependencies, from its folder or from the
+      # system. A missing one (an FFmpeg or SDL library that was not staged, a system library that no desktop has) fails when the editor starts.
+      - name: Check that the package's Linux native libraries resolve
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          dir="$RUNNER_TEMP/package"
+          mkdir -p "$dir"
+          unzip -q "$STRIDE_ODADDIN" -d "$dir"
+          failed=0
+          checked=0
+          for native in "$dir/Vulkan/runtimes/linux-x64/native" "$dir/runtimes/linux-x64/native"; do
+            if [ ! -d "$native" ]; then echo "::error::the package has no $native"; failed=1; continue; fi
+            for lib in "$native"/*.so*; do
+              [ -e "$lib" ] || continue
+              checked=$((checked + 1))
+              missing=$(LD_LIBRARY_PATH="$native" ldd "$lib" 2>&1 | grep -E 'not found|not a dynamic' || true)
+              if [ -n "$missing" ]; then echo "::error::${lib#$dir/}: $(echo $missing)"; failed=1; fi
+            done
+          done
+          echo "checked $checked shared libraries"
+          if [ "$checked" -lt 20 ]; then echo "::error::only $checked shared libraries found; the Linux natives are missing"; failed=1; fi
+          exit $failed
+
       # Without the game's packages (Stride's engine assets and shaders) the game faults and the viewport is black while everything reports
       # "running": restore it so the viewport check sees a real scene.
       - name: Restore the Stride game
