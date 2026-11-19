@@ -71,6 +71,7 @@ jobs:
             /sources/Directory.Packages.props
             /samples/nuget.config
             /samples/Templates/FirstPersonShooter
+            /samples/Templates/Packs
             /sources/tools/Stride.OpenDevelop.AddIn.Tests
           sparse-checkout-cone-mode: false
 
