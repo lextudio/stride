@@ -139,6 +139,13 @@ jobs:
           New-ItemProperty -Path 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers' -Name $icd -Value 0 -PropertyType DWord -Force | Out-Null
           'STRIDE_GRAPHICS_API=Vulkan' >> $env:GITHUB_ENV
           "Windows renders with Vulkan through Stride.Dependencies.Lavapipe $version ($($dll.FullName))"
+          # A native crash in the IDE (seen: access violation after a host-window resize) leaves only managed frames in its output: have the
+          # runtime write a minidump so the next step can print the native stack.
+          $dumps = Join-Path $env:RUNNER_TEMP 'dumps'
+          New-Item -ItemType Directory -Force $dumps | Out-Null
+          'DOTNET_DbgEnableMiniDump=1' >> $env:GITHUB_ENV
+          'DOTNET_DbgMiniDumpType=2' >> $env:GITHUB_ENV
+          "DOTNET_DbgMiniDumpName=$dumps\%e.%p.dmp" >> $env:GITHUB_ENV
 
       # Which Vulkan driver renders: by default the Lavapipe build Stride's own Linux GPU tests use and compare with their gold images
       # (test-linux-game.yml: Stride.Dependencies.Lavapipe, version pinned in sources/Directory.Packages.props), forced with VK_DRIVER_FILES as
@@ -290,6 +297,28 @@ jobs:
             exit 1
           fi
           exit "$status"
+
+      - name: Print the native stack of a crash (Windows, Vulkan diagnostic)
+        if: always() && runner.os == 'Windows' && inputs.windows_vulkan
+        shell: pwsh
+        run: |
+          $dumps = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'dumps') -Filter *.dmp -ErrorAction SilentlyContinue
+          if (-not $dumps) { 'no crash dump'; return }
+          $cdb = @("${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe", "$env:ProgramFiles\Windows Kits\10\Debuggers\x64\cdb.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $cdb) { "cdb not found; dumps: $($dumps.FullName -join ', ')"; return }
+          foreach ($d in $dumps) {
+            "=== $($d.Name) ($([int]($d.Length / 1MB)) MB)"
+            & $cdb -z $d.FullName -c '.ecxr; r; kn 40; ub @rip L8; u @rip L4; lm m vulkan*; lm m Stride*; q' 2>&1 | Select-Object -Last 120
+          }
+
+      - name: Upload the crash dumps (Windows, Vulkan diagnostic)
+        if: always() && runner.os == 'Windows' && inputs.windows_vulkan
+        uses: actions/upload-artifact@v7
+        with:
+          name: crash-dumps-${{ matrix.name }}
+          path: ${{ runner.temp }}/dumps
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload the viewport screenshots
         if: always() && matrix.viewport == '1'
