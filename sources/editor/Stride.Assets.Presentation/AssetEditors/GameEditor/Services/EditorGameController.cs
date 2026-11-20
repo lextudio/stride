@@ -102,11 +102,25 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// </summary>
         public void Tick()
         {
-            if (sdlContext == null)
+            // Not re-entrant: on Windows, pumping SDL events (here and inside the frame) also dispatches the host's own window messages on this
+            // thread, including the host's next render tick, which would call Tick again in the middle of a frame. That nested frame applied the
+            // pending resize (destroying images the outer frame's command list references) and reset the shared command list, so the outer frame
+            // went on recording into an invalid Vulkan command buffer (validation: "VkImage ... was destroyed"; Lavapipe: access violation).
+            if (sdlContext == null || ticking)
                 return;
-            Stride.Graphics.SDL.Application.ProcessEvents();
-            sdlContext.RunCallback?.Invoke();
+            ticking = true;
+            try
+            {
+                Stride.Graphics.SDL.Application.ProcessEvents();
+                sdlContext.RunCallback?.Invoke();
+            }
+            finally
+            {
+                ticking = false;
+            }
         }
+
+        private bool ticking;
 
         /// <inheritdoc/>
         public void ResizeGame(int width, int height)
