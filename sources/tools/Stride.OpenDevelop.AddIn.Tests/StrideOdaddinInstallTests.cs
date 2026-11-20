@@ -121,6 +121,12 @@ public sealed class StrideOdaddinInstallTests
 							// The IDE stopped answering in the middle of a check: it died. Its own output is the only record of why.
 							throw new Xunit.Sdk.XunitException("The IDE stopped answering during the viewport checks (it most likely crashed): " + ex.Message + "\nIDE output:\n" + second.Output);
 						}
+						finally
+						{
+							// Kept beside the screenshots (CI uploads that folder): the IDE's log, including any Vulkan validation-layer messages.
+							try { Directory.CreateDirectory(shotDirectory); File.WriteAllText(Path.Combine(shotDirectory, "ide-output.txt"), second.Output); }
+							catch (IOException) { }
+						}
 					}
 				}
 			}
