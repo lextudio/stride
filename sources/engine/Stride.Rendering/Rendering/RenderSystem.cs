@@ -481,7 +481,14 @@ namespace Stride.Rendering
                     var endExclusive = Math.Min(renderNodeCount, currentStart + batchSize);
 
                     if (endExclusive <= currentStart)
+                    {
+                        // An empty batch still has to put a command list of THIS frame in its slot: returning without one left the previous
+                        // frame's compiled list there, which ExecuteCommandLists below then submitted a second time (Vulkan validation:
+                        // "recorded with VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT has been submitted 2 times"; with Lavapipe an access
+                        // violation, intermittently, e.g. after a viewport resize changed how the nodes split into batches).
+                        commandLists[batchIndex + 1] = threadContext.CommandList.Close();
                         return;
+                    }
 
                     for (; currentStart < endExclusive; currentStart = currentEnd)
                     {
