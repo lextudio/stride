@@ -308,7 +308,13 @@ jobs:
           if (-not $cdb) { "cdb not found; dumps: $($dumps.FullName -join ', ')"; return }
           foreach ($d in $dumps) {
             "=== $($d.Name) ($([int]($d.Length / 1MB)) MB)"
-            & $cdb -z $d.FullName -c '.ecxr; r; kn 40; ub @rip L8; u @rip L4; lm m vulkan*; lm m Stride*; q' 2>&1 | Select-Object -Last 120
+            $out = & $cdb -z $d.FullName -c '.exr -1; ~* kn 14; q' 2>&1
+            $out | Where-Object { $_ -match 'ExceptionAddress|ExceptionCode|Attempt to|Parameter' } | Select-Object -First 8
+            # One block per thread ("   5  Id: 1234.5678 ..."); keep the ones with Vulkan frames on their stacks.
+            $blocks = ($out -join "`n") -split '\n(?=\s*[.#]?\s*\d+\s+Id: )'
+            $hits = @($blocks | Where-Object { $_ -match 'vulkan_lvp|vulkan_1' })
+            "threads with Vulkan frames: $($hits.Count) of $($blocks.Count)"
+            $hits | Select-Object -First 4
           }
 
       - name: Upload the crash dumps (Windows, Vulkan diagnostic)
