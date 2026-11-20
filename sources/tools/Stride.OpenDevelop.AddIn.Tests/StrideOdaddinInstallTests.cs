@@ -109,10 +109,18 @@ public sealed class StrideOdaddinInstallTests
 					// renders frames, real pixels are on screen there and real OS pointer input reaches the game.
 					{
 						string shotDirectory = Environment.GetEnvironmentVariable("STRIDE_VIEWPORT_SHOT_DIR") is { Length: > 0 } shots ? shots : Path.Combine(Path.GetTempPath(), "stride-viewport-shots");
-						if (OperatingSystem.IsWindows())
-							await WindowsOverlayVerification.VerifyAsync(second, shotDirectory, (poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
-						else if (OperatingSystem.IsLinux())
-							await LinuxOverlayVerification.VerifyAsync(second, shotDirectory, (poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
+						try
+						{
+							if (OperatingSystem.IsWindows())
+								await WindowsOverlayVerification.VerifyAsync(second, shotDirectory, (poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
+							else if (OperatingSystem.IsLinux())
+								await LinuxOverlayVerification.VerifyAsync(second, shotDirectory, (poll, timeout) => OpenDevelopAppFixture.PollUntilAsync(poll, timeout));
+						}
+						catch (HttpRequestException ex)
+						{
+							// The IDE stopped answering in the middle of a check: it died. Its own output is the only record of why.
+							throw new Xunit.Sdk.XunitException("The IDE stopped answering during the viewport checks (it most likely crashed): " + ex.Message + "\nIDE output:\n" + second.Output);
+						}
 					}
 				}
 			}
