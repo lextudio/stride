@@ -34,6 +34,9 @@ on:
         description: 'Diagnostic: render on Windows with Vulkan (Stride''s Lavapipe) instead of Direct3D11, to compare with Linux'
         type: boolean
         default: false
+      dump_run_id:
+        description: 'Diagnostic: only analyse the crash dump artifact of this earlier run (crash-dumps-windows-x64) with cdb; no test runs'
+        default: ''
 
 permissions:
   contents: read
@@ -48,8 +51,38 @@ env:
   STRIDE_RUN_ID: ${{ inputs.run_id || '' }}
 
 jobs:
+  analyze-dump:
+    name: Analyse a crash dump
+    if: inputs.dump_run_id != ''
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      actions: read
+    steps:
+      - name: Print the crashing thread's native stack
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'dumps'
+          gh run download ${{ inputs.dump_run_id }} --repo $env:GITHUB_REPOSITORY --name crash-dumps-windows-x64 --dir $dir
+          if ($LASTEXITCODE -ne 0) { throw 'no crash-dumps-windows-x64 artifact in that run' }
+          $cdb = @("${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe", "$env:ProgramFiles\Windows Kits\10\Debuggers\x64\cdb.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $cdb) { throw 'cdb not found' }
+          foreach ($d in Get-ChildItem $dir -Recurse -Filter *.dmp) {
+            "=== $($d.Name)"
+            $out = & $cdb -z $d.FullName -c '.exr -1; ~* kn 18; q' 2>&1
+            $out | Where-Object { $_ -match 'ExceptionAddress|ExceptionCode|Attempt to|Parameter\[' } | Select-Object -First 8
+            # One block per thread ("   5  Id: 1234.5678 ..."); keep the ones with Vulkan frames, then the first two others with Stride natives.
+            $blocks = ($out -join "`n") -split '\n(?=\s*[.#]?\s*\d+\s+Id: )'
+            $hits = @($blocks | Where-Object { $_ -match 'vulkan_lvp|vulkan_1' })
+            "threads: $($blocks.Count), with Vulkan frames: $($hits.Count)"
+            $hits | Select-Object -First 6
+          }
+
   test:
     name: Install the released add-in (${{ matrix.name }})
+    if: inputs.dump_run_id == ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
