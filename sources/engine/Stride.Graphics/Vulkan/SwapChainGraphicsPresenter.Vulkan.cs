@@ -301,6 +301,12 @@ namespace Stride.Graphics
 
         private void RecreateBackBuffer(int width, int height, PixelFormat format)
         {
+            // The back buffer's views (and, through CreateSwapChain's clamp to the surface extent, the depth buffer) are destroyed immediately
+            // below, while the GPU may still be executing the last frame's commands that reference them: DestroySwapchain's own wait comes later,
+            // inside CreateSwapChain. With Lavapipe, whose queue runs on its own thread, that was a use-after-free - an access violation in
+            // vulkan_lvp on that thread after a window resize (Windows). Wait for the GPU first.
+            WaitForGpuIdle();
+
             // Manually update all children textures
             var fastList = DestroyChildrenTextures(backBuffer);
 
@@ -314,6 +320,9 @@ namespace Stride.Graphics
 
         protected override void ResizeDepthStencilBuffer(int width, int height, PixelFormat format)
         {
+            // Destroyed immediately below: the GPU must be done with it first (see RecreateBackBuffer; CreateSwapChain calls this before its wait).
+            WaitForGpuIdle();
+
             var newTextureDescription = DepthStencilBuffer.Description;
             newTextureDescription.Width = width;
             newTextureDescription.Height = height;
@@ -331,6 +340,12 @@ namespace Stride.Graphics
             {
                 texture.InitializeFrom(DepthStencilBuffer, texture.ViewDescription);
             }
+        }
+
+        private void WaitForGpuIdle()
+        {
+            if (GraphicsDevice?.NativeDevice is { } device && device != VkDevice.Null)
+                GraphicsDevice.CheckResult(GraphicsDevice.NativeDeviceApi.vkDeviceWaitIdle(device));
         }
 
 
