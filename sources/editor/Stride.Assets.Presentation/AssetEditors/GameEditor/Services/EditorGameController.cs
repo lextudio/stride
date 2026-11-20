@@ -111,28 +111,11 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Services
         /// <inheritdoc/>
         public void ResizeGame(int width, int height)
         {
-            width = Math.Max(1, width);
-            height = Math.Max(1, height);
-
-            // Drive the size through the PRESENTER (not GraphicsDeviceManager.ApplyChanges, which
-            // re-derives the presenter description from PreferredBackBuffer only on a full device
-            // re-init and so never updates a live swapchain). GraphicsPresenter.Resize writes
-            // Description.BackBufferWidth/Height directly and recreates the backbuffer at exactly
-            // that size, bypassing the macOS SDL drawable's polluted currentExtent that would
-            // otherwise make the window's aspect-ratio mismatch and the frame squashed.
-            var presenter = Game?.GraphicsDevice?.Presenter;
-            if (presenter == null)
-                return;
-            presenter.Resize(width, height, presenter.Description.BackBufferFormat);
-
-            // Keep the device manager's preference in sync so the engine's own resize path (window
-            // resize / next ApplyChanges) agrees rather than snapping back to the stale extent.
-            var deviceManager = Game?.GraphicsDeviceManager;
-            if (deviceManager != null)
-            {
-                deviceManager.PreferredBackBufferWidth = width;
-                deviceManager.PreferredBackBufferHeight = height;
-            }
+            // Drive the size through the PRESENTER at exactly this size (not GraphicsDeviceManager.ApplyChanges, which never updates a live
+            // swapchain; and bypassing the macOS SDL drawable's polluted currentExtent that would otherwise squash the frame). Applied by the
+            // game at the start of its next frame, not here: this is called from the host's UI events, which can arrive in the middle of a frame
+            // (see EditorServiceGame.RequestBackBufferResize).
+            Game?.RequestBackBufferResize(width, height);
         }
 #endif
         /// <summary>

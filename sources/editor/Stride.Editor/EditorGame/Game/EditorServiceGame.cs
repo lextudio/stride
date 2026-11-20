@@ -199,6 +199,40 @@ namespace Stride.Editor.EditorGame.Game
             }
         }
 
+        private (int Width, int Height)? pendingBackBufferSize;
+
+        /// <summary>
+        /// Asks for the back buffer to be resized at the start of the next frame. A host (an IDE pinning this game's window over a UI element)
+        /// learns about size changes from its UI events, and those can arrive in the middle of a frame: on Windows, SDL's event pump also
+        /// dispatches the host window's messages on the same thread. Resizing the presenter right there destroys the back-buffer and depth
+        /// images that the frame's open command list already references (Vulkan: the command buffer becomes invalid, and Lavapipe crashed with an
+        /// access violation). Deferring the resize to <see cref="BeginDraw"/>, before the frame's command list starts recording, avoids that.
+        /// </summary>
+        public void RequestBackBufferResize(int width, int height)
+        {
+            pendingBackBufferSize = (Math.Max(1, width), Math.Max(1, height));
+        }
+
+        private void ApplyPendingBackBufferResize()
+        {
+            if (pendingBackBufferSize is not { } size)
+                return;
+            pendingBackBufferSize = null;
+
+            // Drive the size through the PRESENTER (GraphicsDeviceManager.ApplyChanges only re-derives the presenter description on a full
+            // device re-init, so it never updates a live swapchain); keep the device manager's preference in sync so the engine's own resize
+            // path agrees rather than snapping back.
+            var presenter = GraphicsDevice?.Presenter;
+            if (presenter == null)
+                return;
+            presenter.Resize(size.Width, size.Height, presenter.Description.BackBufferFormat);
+            if (GraphicsDeviceManager is { } deviceManager)
+            {
+                deviceManager.PreferredBackBufferWidth = size.Width;
+                deviceManager.PreferredBackBufferHeight = size.Height;
+            }
+        }
+
         protected override bool BeginDraw()
         {
             if (IsEditorHidden && !isFirstDrawCall)
@@ -207,6 +241,8 @@ namespace Stride.Editor.EditorGame.Game
                 return false;
             }
             isFirstDrawCall = false;
+            // Between frames: the previous frame's command list has been submitted and this one has not started recording yet.
+            ApplyPendingBackBufferResize();
             return base.BeginDraw();
         }
 
