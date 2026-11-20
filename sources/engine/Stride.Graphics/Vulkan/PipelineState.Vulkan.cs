@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Vortice.Vulkan;
 using Stride.Shaders;
 using Stride.Core.Serialization;
@@ -40,6 +41,8 @@ namespace Stride.Graphics
         // GLSL converter always outputs entry point main()
         private static readonly byte[] defaultEntryPoint = Encoding.UTF8.GetBytes("main\0");
 
+        private static readonly bool logStages = Environment.GetEnvironmentVariable("STRIDE_VULKAN_LOG_STAGES") == "1";
+
         internal PipelineState(GraphicsDevice graphicsDevice, PipelineStateDescription pipelineStateDescription) : base(graphicsDevice)
         {
             Description = pipelineStateDescription.Clone();
@@ -48,9 +51,24 @@ namespace Stride.Graphics
 
         private unsafe void Recreate()
         {
-            // Note: important to pin this so that stages[x].Name is valid during this whole function
+            // Each VkPipelineShaderStageCreateInfo.pName points into a stage's EntryPoint array, and the driver reads it only when the pipeline is
+            // created, after CreateShaderStages has returned and more arrays were allocated. A `fixed` inside CreateShaderStages unpins it on
+            // return, so a GC in between could move the array and leave pName pointing elsewhere: the driver then gets a name that is not in the
+            // SPIR-V module (MoltenVK's SPIRV-Cross throws in get_entry_point and the process aborts; Lavapipe renders with the wrong entry
+            // point). Pin every stage's entry point for the whole of RecreateInner.
+            var stagesToPin = Description.EffectBytecode?.Stages;
+            var pins = new GCHandle[stagesToPin?.Length ?? 0];
             try
             {
+                for (int i = 0; i < pins.Length; i++)
+                {
+                    if (stagesToPin[i].EntryPoint != null)
+                        pins[i] = GCHandle.Alloc(stagesToPin[i].EntryPoint, GCHandleType.Pinned);
+                }
+                // Diagnostics, off by default: STRIDE_VULKAN_LOG_STAGES=1 prints every pipeline's stages and entry points to stderr.
+                if (stagesToPin is { Length: > 0 } && logStages)
+                    Console.Error.WriteLine("[Stride.Vulkan] pipeline " + stagesToPin[0].Id + " stages: "
+                        + string.Join(", ", stagesToPin.Select(s => s.Stage + ":" + (s.EntryPoint == null ? "<null>" : Encoding.UTF8.GetString(s.EntryPoint).TrimEnd('\0')))));
                 fixed (void* defaultEntryPointData = defaultEntryPoint) // null if array is empty or null
                     RecreateInner();
             }
@@ -58,6 +76,14 @@ namespace Stride.Graphics
             {
                 var entryPoints = string.Join(", ", stages.Select(s => $"{s.Stage}:{Encoding.UTF8.GetString(s.EntryPoint).TrimEnd('\0')}"));
                 throw new InvalidOperationException($"{ex.Message} (bytecode {stages[0].Id} [{entryPoints}])", ex);
+            }
+            finally
+            {
+                foreach (var pin in pins)
+                {
+                    if (pin.IsAllocated)
+                        pin.Free();
+                }
             }
         }
 
